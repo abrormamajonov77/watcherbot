@@ -157,5 +157,5 @@ if __name__ == "__main__":
     keep_alive()
     while True:
         run_scanner()
-        print("Skanerlash yakunlandi. 15 daqiqa kutilmoqda...\n")
-        time.sleep(900)
+        print("Skanerlash yakunlandi. 3 daqiqa kutilmoqda...\n")
+        time.sleep(180)
