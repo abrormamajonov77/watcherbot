@@ -25,9 +25,9 @@ def keep_alive():
 # ⚙️ ASOSIY SOZLAMALAR
 # ==========================================
 MIN_24H_VOLUME = 1_000_000   
-MIN_PRICE_JUMP = 1.5         # O'sish signali uchun minimal foiz (+)
-MIN_PRICE_DROP = -1.5        # Qulash signali uchun minimal foiz (-)
-VOLUME_SPIKE_X = 2.0         # Har ikki holatda ham hajm necha barobar oshishi kerakligi
+MIN_PRICE_JUMP = 1.5         
+MIN_PRICE_DROP = -1.5        
+VOLUME_SPIKE_X = 2.0         
 
 TELEGRAM_BOT_TOKEN = '8041515869:AAEbPmoFzh_LZLxZzpR-DP1epc4E3eDTQsg'
 TELEGRAM_CHAT_ID = '88808651'
@@ -35,21 +35,61 @@ TELEGRAM_CHAT_ID = '88808651'
 mexc = ccxt.mexc({'enableRateLimit': True})
 
 # ==========================================
-# 📩 TELEGRAM XABARNOMA
+# 📩 TELEGRAM XABARNOMA (Tugma bilan)
 # ==========================================
-def send_telegram_message(text):
+def send_telegram_message(text, symbol):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    
+    # Koin nomini MEXC ssilkasi uchun to'g'rilash (masalan: BTC/USDT -> BTC_USDT)
+    mexc_symbol = symbol.replace('/', '_')
+    mexc_url = f"https://www.mexc.com/exchange/{mexc_symbol}"
+    
+    # Interaktiv tugma (Minimalist dizayn)
+    reply_markup = {
+        "inline_keyboard": [[
+            {"text": "📊 Grafikni ko'rish", "url": mexc_url}
+        ]]
+    }
+    
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID, 
+        "text": text, 
+        "parse_mode": "HTML", 
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup
+    }
+    
     try:
         requests.post(url, json=payload)
     except Exception as e:
         print(f"Telegram xatolik: {e}")
 
 # ==========================================
-# 📊 ASOSIY TAHLIL ALGORITMI
+# 🛡 4 SOATLIK (4H) TREND FILTRI
+# ==========================================
+def check_4h_trend(symbol, is_pump):
+    try:
+        ohlcv_4h = mexc.fetch_ohlcv(symbol, timeframe='4h', limit=100)
+        if len(ohlcv_4h) < 50: return False
+        
+        df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df_4h['EMA_50'] = df_4h['close'].ewm(span=50, adjust=False).mean()
+        
+        current_price = df_4h.iloc[-1]['close']
+        current_ema50_4h = df_4h.iloc[-1]['EMA_50']
+        
+        if is_pump:
+            return current_price > current_ema50_4h  # O'sish uchun 4H trend ham tepaga bo'lishi shart
+        else:
+            return current_price < current_ema50_4h  # Qulash uchun 4H trend ham pastga bo'lishi shart
+    except Exception:
+        return False
+
+# ==========================================
+# 📊 ASOSIY TAHLIL ALGORITMI (1H)
 # ==========================================
 def run_scanner():
-    print(f"[{time.strftime('%H:%M:%S')}] MEXC bozorini 1H taymfreymda tahlil qilish (O'sish va Qulash) boshlandi...")
+    print(f"[{time.strftime('%H:%M:%S')}] MEXC skaneri (1H + 4H Filtr) ishga tushdi...")
     try:
         tickers = mexc.fetch_tickers()
         markets = mexc.load_markets()
@@ -68,43 +108,45 @@ def run_scanner():
                 prev_candles = df.iloc[-24:-1] 
                 
                 current_price = current_candle['close']
-                current_ema50 = current_candle['EMA_50']
+                current_ema50_1h = current_candle['EMA_50']
                 
                 avg_volume = prev_candles['volume'].mean()
                 current_volume = current_candle['volume']
                 price_change = ((current_price - current_candle['open']) / current_candle['open']) * 100
                 
-                # Agar hajm odatdagidan kam bo'lsa, qolgan hisob-kitoblarni qilib o'tirish shart emas
+                # Hajm yetarli bo'lmasa, keyingi koinga o'tamiz
                 if current_volume < (avg_volume * VOLUME_SPIKE_X):
                     continue
                     
                 volume_spike = current_volume / avg_volume
                 
-                # 🟢 1-Holat: O'SISH (Hajm kirishi va narx ko'tarilishi)
-                if price_change >= MIN_PRICE_JUMP and current_price > current_ema50:
-                    msg = (
-                        f"🟢 <b>{symbol}</b> | 1H (Nasos)\n\n"
-                        f"💵 <b>Narx:</b> ${current_price:.4f}\n"
-                        f"📈 <b>O'sish:</b> +{price_change:.2f}%\n"
-                        f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x\n"
-                        f"🛡 <b>Trend:</b> EMA-50 dan yuqori\n\n"
-                        f"⚡️ WATCHER GURU.UZ | Skaner"
-                    )
-                    send_telegram_message(msg)
-                    print(f"✅ O'sish signali yuborildi: {symbol}")
+                # 🟢 1-Holat: O'SISH (Nasos) - Avval 1H tekshiriladi, keyin 4H ga so'rov yuboriladi
+                if price_change >= MIN_PRICE_JUMP and current_price > current_ema50_1h:
+                    if check_4h_trend(symbol, is_pump=True):
+                        msg = (
+                            f"🟢 <b>{symbol}</b> | 1H (Nasos)\n\n"
+                            f"💵 <b>Narx:</b> ${current_price:.4f}\n"
+                            f"📈 <b>O'sish:</b> +{price_change:.2f}%\n"
+                            f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x\n"
+                            f"🛡 <b>Trend (1H+4H):</b> Tasdiqlandi (Uptrend)\n\n"
+                            f"⚡️ WATCHER GURU.UZ | Skaner"
+                        )
+                        send_telegram_message(msg, symbol)
+                        print(f"✅ O'sish signali yuborildi: {symbol}")
                     
-                # 🔴 2-Holat: QULASH (Hajm chiqib ketishi va vahimali sotuv)
-                elif price_change <= MIN_PRICE_DROP and current_price < current_ema50:
-                    msg = (
-                        f"🔴 <b>{symbol}</b> | 1H (Damp)\n\n"
-                        f"💵 <b>Narx:</b> ${current_price:.4f}\n"
-                        f"📉 <b>Qulash:</b> {price_change:.2f}%\n"
-                        f"📊 <b>Chiqib ketgan hajm:</b> {volume_spike:.1f}x\n"
-                        f"🛡 <b>Trend:</b> EMA-50 dan pastga tushdi\n\n"
-                        f"⚡️ WATCHER GURU.UZ | Skaner"
-                    )
-                    send_telegram_message(msg)
-                    print(f"🚨 Qulash signali yuborildi: {symbol}")
+                # 🔴 2-Holat: QULASH (Damp) - Avval 1H tekshiriladi, keyin 4H ga so'rov yuboriladi
+                elif price_change <= MIN_PRICE_DROP and current_price < current_ema50_1h:
+                    if check_4h_trend(symbol, is_pump=False):
+                        msg = (
+                            f"🔴 <b>{symbol}</b> | 1H (Damp)\n\n"
+                            f"💵 <b>Narx:</b> ${current_price:.4f}\n"
+                            f"📉 <b>Qulash:</b> {price_change:.2f}%\n"
+                            f"📊 <b>Chiqib ketgan hajm:</b> {volume_spike:.1f}x\n"
+                            f"🛡 <b>Trend (1H+4H):</b> Tasdiqlandi (Downtrend)\n\n"
+                            f"⚡️ WATCHER GURU.UZ | Skaner"
+                        )
+                        send_telegram_message(msg, symbol)
+                        print(f"🚨 Qulash signali yuborildi: {symbol}")
                     
                 time.sleep(0.1) 
             except Exception: continue
