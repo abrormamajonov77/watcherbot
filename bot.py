@@ -35,19 +35,19 @@ TELEGRAM_CHAT_ID = '88808651'
 mexc = ccxt.mexc({'enableRateLimit': True})
 
 # ==========================================
-# 📩 TELEGRAM XABARNOMA (Tugma bilan)
+# 📩 TELEGRAM XABARNOMA (TradingView tugmasi bilan)
 # ==========================================
 def send_telegram_message(text, symbol):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # Koin nomini MEXC ssilkasi uchun to'g'rilash (masalan: BTC/USDT -> BTC_USDT)
-    mexc_symbol = symbol.replace('/', '_')
-    mexc_url = f"https://www.mexc.com/exchange/{mexc_symbol}"
+    # Koin nomini TradingView ssilkasi uchun to'g'rilash (masalan: BTC/USDT -> MEXC:BTCUSDT)
+    tv_symbol = symbol.replace('/', '')
+    tv_url = f"https://www.tradingview.com/chart/?symbol=MEXC:{tv_symbol}"
     
     # Interaktiv tugma (Minimalist dizayn)
     reply_markup = {
         "inline_keyboard": [[
-            {"text": "📊 Grafikni ko'rish", "url": mexc_url}
+            {"text": "📈 TradingView'da ko'rish", "url": tv_url}
         ]]
     }
     
@@ -120,7 +120,7 @@ def run_scanner():
                     
                 volume_spike = current_volume / avg_volume
                 
-                # 🟢 1-Holat: O'SISH (Nasos) - Avval 1H tekshiriladi, keyin 4H ga so'rov yuboriladi
+                # 🟢 1-Holat: O'SISH (Nasos)
                 if price_change >= MIN_PRICE_JUMP and current_price > current_ema50_1h:
                     if check_4h_trend(symbol, is_pump=True):
                         msg = (
@@ -134,7 +134,7 @@ def run_scanner():
                         send_telegram_message(msg, symbol)
                         print(f"✅ O'sish signali yuborildi: {symbol}")
                     
-                # 🔴 2-Holat: QULASH (Damp) - Avval 1H tekshiriladi, keyin 4H ga so'rov yuboriladi
+                # 🔴 2-Holat: QULASH (Damp)
                 elif price_change <= MIN_PRICE_DROP and current_price < current_ema50_1h:
                     if check_4h_trend(symbol, is_pump=False):
                         msg = (
