@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot 24/7 faol holatda ishlamoqda!"
+    return "Breakout-Snayper 24/7 faol holatda ishlamoqda!"
 
 def run_server():
     app.run(host='0.0.0.0', port=8080)
@@ -25,9 +25,9 @@ def keep_alive():
 # ⚙️ ASOSIY SOZLAMALAR
 # ==========================================
 MIN_24H_VOLUME = 1_000_000   
-MIN_PRICE_JUMP = 1.5         
-MIN_PRICE_DROP = -1.5        
-VOLUME_SPIKE_X = 2.0         
+TIMEFRAME = '15m'            # Tezkor reaksiya uchun 15 daqiqalik radar
+VOLUME_SPIKE_X = 2.5         # Shovqinni kesish uchun kuchli hajm (2.5 barobar)
+PAST_CANDLES = 16            # Oxirgi 4 soatlik tarixni tekshirish (16 ta 15m shamcha = 4 soat)
 
 TELEGRAM_BOT_TOKEN = '8041515869:AAEbPmoFzh_LZLxZzpR-DP1epc4E3eDTQsg'
 TELEGRAM_CHAT_ID = '88808651'
@@ -40,11 +40,9 @@ mexc = ccxt.mexc({'enableRateLimit': True})
 def send_telegram_message(text, symbol):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
-    # Koin nomini TradingView ssilkasi uchun to'g'rilash (masalan: BTC/USDT -> MEXC:BTCUSDT)
     tv_symbol = symbol.replace('/', '')
     tv_url = f"https://www.tradingview.com/chart/?symbol=MEXC:{tv_symbol}"
     
-    # Interaktiv tugma (Minimalist dizayn)
     reply_markup = {
         "inline_keyboard": [[
             {"text": "📈 TradingView'da ko'rish", "url": tv_url}
@@ -65,31 +63,10 @@ def send_telegram_message(text, symbol):
         print(f"Telegram xatolik: {e}")
 
 # ==========================================
-# 🛡 4 SOATLIK (4H) TREND FILTRI
-# ==========================================
-def check_4h_trend(symbol, is_pump):
-    try:
-        ohlcv_4h = mexc.fetch_ohlcv(symbol, timeframe='4h', limit=100)
-        if len(ohlcv_4h) < 50: return False
-        
-        df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df_4h['EMA_50'] = df_4h['close'].ewm(span=50, adjust=False).mean()
-        
-        current_price = df_4h.iloc[-1]['close']
-        current_ema50_4h = df_4h.iloc[-1]['EMA_50']
-        
-        if is_pump:
-            return current_price > current_ema50_4h  # O'sish uchun 4H trend ham tepaga bo'lishi shart
-        else:
-            return current_price < current_ema50_4h  # Qulash uchun 4H trend ham pastga bo'lishi shart
-    except Exception:
-        return False
-
-# ==========================================
-# 📊 ASOSIY TAHLIL ALGORITMI (1H)
+# 📊 "BREAKOUT" (Yorib o'tish) TAHLIL ALGORITMI
 # ==========================================
 def run_scanner():
-    print(f"[{time.strftime('%H:%M:%S')}] MEXC skaneri (1H + 4H Filtr) ishga tushdi...")
+    print(f"[{time.strftime('%H:%M:%S')}] MEXC bozorini 15M (Breakout) strategiyasi bo'yicha tahlil qilish boshlandi...")
     try:
         tickers = mexc.fetch_tickers()
         markets = mexc.load_markets()
@@ -98,55 +75,56 @@ def run_scanner():
         
         for symbol in valid_symbols:
             try:
-                ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1h', limit=100)
-                if len(ohlcv) < 50: continue
+                # 30 ta shamcha yuklab olamiz (ehtiyot shart)
+                ohlcv = mexc.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=30)
+                if len(ohlcv) < (PAST_CANDLES + 2): continue
                 
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                df['EMA_50'] = df['close'].ewm(span=50, adjust=False).mean()
                 
+                # Joriy va o'tgan shamchalarni ajratib olish
                 current_candle = df.iloc[-1]
-                prev_candles = df.iloc[-24:-1] 
+                prev_candles = df.iloc[-(PAST_CANDLES+1):-1] # Oxirgi 4 soatlik tarix
                 
-                current_price = current_candle['close']
-                current_ema50_1h = current_candle['EMA_50']
-                
-                avg_volume = prev_candles['volume'].mean()
+                # QOIDALAR:
+                current_close = current_candle['close']
                 current_volume = current_candle['volume']
-                price_change = ((current_price - current_candle['open']) / current_candle['open']) * 100
+                avg_volume = prev_candles['volume'].mean()
                 
-                # Hajm yetarli bo'lmasa, keyingi koinga o'tamiz
+                # 4 soatlik Shift (Qarshilik) va Pol (Qo'llab-quvvatlash)
+                resistance_high = prev_candles['high'].max()
+                support_low = prev_candles['low'].min()
+                
+                # Hajm yetarli bo'lmasa, hisobni shu yerda to'xtatamiz
                 if current_volume < (avg_volume * VOLUME_SPIKE_X):
                     continue
                     
                 volume_spike = current_volume / avg_volume
                 
-                # 🟢 1-Holat: O'SISH (Nasos)
-                if price_change >= MIN_PRICE_JUMP and current_price > current_ema50_1h:
-                    if check_4h_trend(symbol, is_pump=True):
-                        msg = (
-                            f"🟢 <b>{symbol}</b> | 1H (Nasos)\n\n"
-                            f"💵 <b>Narx:</b> ${current_price:.4f}\n"
-                            f"📈 <b>O'sish:</b> +{price_change:.2f}%\n"
-                            f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x\n"
-                            f"🛡 <b>Trend (1H+4H):</b> Tasdiqlandi (Uptrend)\n\n"
-                            f"⚡️ WATCHER GURU.UZ | Skaner"
-                        )
-                        send_telegram_message(msg, symbol)
-                        print(f"✅ O'sish signali yuborildi: {symbol}")
+                # 🟢 1-Holat: O'SISH ("Faqat tanani ko'r" - Close yorib o'tishi shart)
+                if current_close > resistance_high:
+                    msg = (
+                        f"🚀 <b>{symbol}</b> | 15M (Breakout)\n\n"
+                        f"💵 <b>Hozirgi Narx:</b> ${current_close:.4f}\n"
+                        f"🧱 <b>Yorilgan Shift:</b> ${resistance_high:.4f}\n"
+                        f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x\n"
+                        f"🛡 <b>Trend:</b> 4 soatlik qarshilik tana bilan yorildi!\n\n"
+                        f"⚡️ WATCHER GURU.UZ | Skaner"
+                    )
+                    send_telegram_message(msg, symbol)
+                    print(f"✅ Breakout (O'sish) signali yuborildi: {symbol}")
                     
-                # 🔴 2-Holat: QULASH (Damp)
-                elif price_change <= MIN_PRICE_DROP and current_price < current_ema50_1h:
-                    if check_4h_trend(symbol, is_pump=False):
-                        msg = (
-                            f"🔴 <b>{symbol}</b> | 1H (Damp)\n\n"
-                            f"💵 <b>Narx:</b> ${current_price:.4f}\n"
-                            f"📉 <b>Qulash:</b> {price_change:.2f}%\n"
-                            f"📊 <b>Chiqib ketgan hajm:</b> {volume_spike:.1f}x\n"
-                            f"🛡 <b>Trend (1H+4H):</b> Tasdiqlandi (Downtrend)\n\n"
-                            f"⚡️ WATCHER GURU.UZ | Skaner"
-                        )
-                        send_telegram_message(msg, symbol)
-                        print(f"🚨 Qulash signali yuborildi: {symbol}")
+                # 🔴 2-Holat: QULASH ("Faqat tanani ko'r" - Close pastga tushib yopilishi shart)
+                elif current_close < support_low:
+                    msg = (
+                        f"🩸 <b>{symbol}</b> | 15M (Breakdown)\n\n"
+                        f"💵 <b>Hozirgi Narx:</b> ${current_close:.4f}\n"
+                        f"🧱 <b>Yorilgan Pol:</b> ${support_low:.4f}\n"
+                        f"📊 <b>Chiqib ketgan hajm:</b> {volume_spike:.1f}x\n"
+                        f"🛡 <b>Trend:</b> 4 soatlik tayanch tana bilan sindirildi!\n\n"
+                        f"⚡️ WATCHER GURU.UZ | Skaner"
+                    )
+                    send_telegram_message(msg, symbol)
+                    print(f"🚨 Breakdown (Qulash) signali yuborildi: {symbol}")
                     
                 time.sleep(0.1) 
             except Exception: continue
@@ -157,5 +135,5 @@ if __name__ == "__main__":
     keep_alive()
     while True:
         run_scanner()
-        print("Skanerlash yakunlandi. 3 daqiqa kutilmoqda...\n")
+        print("Skanerlash yakunlandi. Yangi 15M shamcha tahlili uchun 3 daqiqa kutilmoqda...\n")
         time.sleep(180)
