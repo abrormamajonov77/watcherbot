@@ -1,4 +1,7 @@
+aiogram
+pandas_ta
+python-dotenv
 ccxt
-pandas
-requests
 flask
+google-generativeai
+feedparser

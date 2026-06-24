@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import time
 from datetime import datetime, timedelta
 import pandas as pd
 import pandas_ta as ta
@@ -12,27 +11,108 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
+import feedparser
+import google.generativeai as genai
+from keep_alive import keep_alive
+
+# 1. Barcha web-server va asinxron orqa fon jarayonlarini yoqish (Render uchun)
+keep_alive()
+
 load_dotenv()
 
+# --- SOZLAMALAR ---
+# 1-Bot (Snayper)
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-if not TOKEN:
-    print("TELEGRAM_BOT_TOKEN topilmadi. Iltimos .env faylini tekshiring.")
+
+# 2-Bot (Watcher)
+WATCHER_TOKEN = os.getenv('BOT_TOKEN')
+GEMINI_KEY = os.getenv('GEMINI_KEY')
+TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@watcherguruuz')
+RSS_URL = os.getenv('RSS_URL', 'https://watcher.guru/news/feed')
+
+if not TOKEN or not WATCHER_TOKEN or not GEMINI_KEY:
+    print("XATOLIK: .env yoki Variables faylida tokenlar to'liq emas!")
+    print("Iltimos, TELEGRAM_BOT_TOKEN, BOT_TOKEN va GEMINI_KEY ni kiriting.")
     exit(1)
 
+# Ikkita alohida bot yasaladi
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
+watcher_bot = Bot(token=WATCHER_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
 dp = Dispatcher()
+
+# --- WATCHER GURU BOT QISMI (YANGILIKLAR) ---
+genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def xotirani_oqish():
+    if os.path.exists("oxirgi_yangilik.txt"):
+        try:
+            with open("oxirgi_yangilik.txt", "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return ""
+
+def xotiraga_yozish(link):
+    try:
+        with open("oxirgi_yangilik.txt", "w", encoding="utf-8") as f:
+            f.write(link)
+    except Exception as e:
+        print(f"Xotiraga yozishda xatolik: {e}")
+
+async def check_news_loop():
+    print("🚀 WatcherBot (2-motor) ishga tushdi! Sayt kuzatilmoqda...", flush=True)
+    while True:
+        try:
+            feed = feedparser.parse(RSS_URL)
+            if feed.entries:
+                latest_news = feed.entries[0]
+                news_link = latest_news.link
+                oxirgi_link = xotirani_oqish()
+
+                if news_link != oxirgi_link:
+                    if oxirgi_link == "":
+                        print("🚀 Watcher: Birinchi marta ishga tushdi, xotira bo'sh. Faqat saqlaymiz.", flush=True)
+                        xotiraga_yozish(news_link)
+                    else:
+                        print("🔔 Watcher: Yangi post topildi! Tarjima qilinmoqda...", flush=True)
+                        title = latest_news.title
+                        prompt = f"Ushbu inglizcha moliyaviy yangilik sarlavhasini o'zbek tiliga professional, moliya jurnalistlari tilida tarjima qil. Ortiqcha gap qo'shma, faqat tarjimani ber.\nSarlavha: {title}"
+                        
+                        response = model.generate_content(prompt)
+                        tarjima = response.text.strip()
+                        
+                        xabar = f"📰 <b>{tarjima}</b>\n\n👉 <a href='{news_link}'>Batafsil o'qish</a>\n\n🇺🇿 {TARGET_CHANNEL}"
+
+                        image_url = None
+                        if hasattr(latest_news, 'media_content') and len(latest_news.media_content) > 0:
+                            image_url = latest_news.media_content[0].get('url')
+                        elif hasattr(latest_news, 'enclosures') and len(latest_news.enclosures) > 0:
+                            image_url = latest_news.enclosures[0].get('href')
+
+                        if image_url:
+                            await watcher_bot.send_photo(chat_id=TARGET_CHANNEL, photo=image_url, caption=xabar, parse_mode="HTML")
+                        else:
+                            await watcher_bot.send_message(chat_id=TARGET_CHANNEL, text=xabar, parse_mode="HTML")
+                        
+                        xotiraga_yozish(news_link)
+                        print("✅ Watcher: Kanalga muvaffaqiyatli yuborildi!", flush=True)
+        except Exception as e:
+            print(f"❌ Watcher xatosi: {e}", flush=True)
+        
+        await asyncio.sleep(180)
+
+
+# --- SNAYPER BOT QISMI (MEXC SCANNER) ---
 
 USERS_FILE = 'users.json'
 SIGNALS_FILE = 'signals.json'
 
 def load_json(filename, default):
-    if not os.path.exists(filename):
-        return default
+    if not os.path.exists(filename): return default
     with open(filename, 'r') as f:
-        try:
-            return json.load(f)
-        except:
-            return default
+        try: return json.load(f)
+        except: return default
 
 def save_json(filename, data):
     with open(filename, 'w') as f:
@@ -40,10 +120,8 @@ def save_json(filename, data):
 
 users = load_json(USERS_FILE, [])
 signals_db = load_json(SIGNALS_FILE, [])
-
 mexc = ccxt.mexc({'enableRateLimit': True})
 
-# === ASOSIY SOZLAMALAR ===
 MIN_24H_VOLUME = 1_000_000
 TIMEFRAME = '15m'
 MACRO_TIMEFRAME = '4h'
@@ -90,24 +168,20 @@ async def send_to_all(text, symbol=None):
 async def analyze_symbol(symbol):
     async with sem:
         try:
-            # 1. 4H Macro trendni tekshiramiz
             ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe=MACRO_TIMEFRAME, limit=10)
             if len(ohlcv_4h) < 10: return
             
             df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df_4h['ema9'] = ta.ema(df_4h['close'], length=9)
-            
             if pd.isna(df_4h['ema9'].iloc[-2]): return
             macro_trend_up = df_4h['close'].iloc[-2] > df_4h['ema9'].iloc[-2]
             
-            # 2. 15M tahlil
             ohlcv = await mexc.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=30)
             if len(ohlcv) < (PAST_CANDLES + 2): return
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['rsi'] = ta.rsi(df['close'], length=14)
             
-            # Faqat TO'LIQ YOPILGAN oxirgi shamchani (iloc[-2]) tekshiramiz
             closed_candle = df.iloc[-2]
             prev_candles = df.iloc[-(PAST_CANDLES+2):-2]
             
@@ -120,22 +194,18 @@ async def analyze_symbol(symbol):
             resistance_high = prev_candles['high'].max()
             support_low = prev_candles['low'].min()
             
-            if current_volume < (avg_volume * VOLUME_SPIKE_X):
-                return
-                
+            if current_volume < (avg_volume * VOLUME_SPIKE_X): return
             volume_spike = current_volume / avg_volume
             
             signal_key = f"{symbol}_{timestamp}"
-            if signal_key in seen_signals:
-                return
+            if signal_key in seen_signals: return
             
-            # 🟢 O'SISH (LONG)
             if current_close > resistance_high and macro_trend_up and current_rsi < 75:
                 entry = current_close
                 sl = closed_candle['low'] * 0.995 
                 if sl >= entry: sl = entry * 0.99 
                 risk = entry - sl
-                tp = entry + (risk * 2) # 1:2 Risk-Reward
+                tp = entry + (risk * 2)
                 
                 msg = (
                     f"🚀 <b>{symbol}</b> | 15M Breakout (LONG)\n\n"
@@ -154,9 +224,8 @@ async def analyze_symbol(symbol):
                 })
                 save_json(SIGNALS_FILE, signals_db)
                 await send_to_all(msg, symbol)
-                print(f"✅ LONG signal: {symbol}")
+                print(f"✅ Snayper LONG: {symbol}")
                 
-            # 🔴 QULASH (SHORT)
             elif current_close < support_low and not macro_trend_up and current_rsi > 25:
                 entry = current_close
                 sl = closed_candle['high'] * 1.005
@@ -181,28 +250,25 @@ async def analyze_symbol(symbol):
                 })
                 save_json(SIGNALS_FILE, signals_db)
                 await send_to_all(msg, symbol)
-                print(f"🚨 SHORT signal: {symbol}")
+                print(f"🚨 Snayper SHORT: {symbol}")
                 
         except Exception as e:
             pass
 
 async def scanner_loop():
+    print("🚀 SnayperBot (1-motor) ishga tushdi! MEXC skanerlanmoqda...", flush=True)
     while True:
         try:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] MEXC bozorini Skanerlash boshlandi...")
             tickers = await mexc.fetch_tickers()
             markets = await mexc.load_markets()
             
             valid_symbols = [s for s, t in tickers.items() if s.endswith('/USDT') and markets.get(s, {}).get('spot') and t.get('quoteVolume', 0) >= MIN_24H_VOLUME]
-            print(f"Jami tekshiriladigan tangalar: {len(valid_symbols)} ta")
             
             tasks = [analyze_symbol(sym) for sym in valid_symbols]
             await asyncio.gather(*tasks)
-            
-            print("Skanerlash yakunlandi. Keyingi siklgacha 1 daqiqa kutilmoqda...\n")
             await asyncio.sleep(60)
         except Exception as e:
-            print(f"Skaner kritik xatoligi: {e}")
+            print(f"Snayper kritik xatoligi: {e}")
             await asyncio.sleep(60)
 
 async def background_checker():
@@ -235,8 +301,8 @@ async def background_checker():
             if changed:
                 save_json(SIGNALS_FILE, signals_db)
                 
-        except Exception as e:
-            print(f"Checker xatosi: {e}")
+        except Exception:
+            pass
             
         await asyncio.sleep(300)
 
@@ -266,18 +332,19 @@ async def weekly_reporter():
                     f"🏆 <b>Haftalik Aniqlik (WinRate): {win_rate:.1f}%</b>"
                 )
                 await send_to_all(report_msg)
-                print("Haftalik hisobot yuborildi.")
             
             await asyncio.sleep(3600)
         else:
             await asyncio.sleep(60)
 
 async def main():
-    print("Bot ishga tushmoqda...")
+    print("Matorlar o't oldirilmoqda...", flush=True)
     asyncio.create_task(scanner_loop())
     asyncio.create_task(background_checker())
     asyncio.create_task(weekly_reporter())
+    asyncio.create_task(check_news_loop())
     
+    # Aiogram dp faqat SnayperBot (start komandasi) uchun ishlaydi
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
