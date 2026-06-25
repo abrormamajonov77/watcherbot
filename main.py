@@ -14,6 +14,7 @@ import feedparser
 import google.generativeai as genai
 from keep_alive import keep_alive
 import motor.motor_asyncio
+import certifi
 
 # 1. Barcha web-server va asinxron orqa fon jarayonlarini yoqish (Render uchun)
 keep_alive()
@@ -43,7 +44,7 @@ if not MONGO_URI:
     exit(1)
 
 # MongoDB ulanishi
-mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
 db = mongo_client['sniper_bot_db']
 users_collection = db['users']
 signals_collection = db['signals']
