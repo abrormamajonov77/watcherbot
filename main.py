@@ -47,7 +47,7 @@ if not MONGO_URI:
     exit(1)
 
 # MongoDB ulanishi
-mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where())
+mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where(), tlsAllowInvalidCertificates=True)
 db = mongo_client['sniper_bot_db']
 users_collection = db['users']
 signals_collection = db['signals']
