@@ -15,6 +15,9 @@ import google.generativeai as genai
 from keep_alive import keep_alive
 import motor.motor_asyncio
 import certifi
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 # 1. Barcha web-server va asinxron orqa fon jarayonlarini yoqish (Render uchun)
 keep_alive()
@@ -357,6 +360,7 @@ async def main():
     asyncio.create_task(check_news_loop())
     
     # Aiogram dp faqat SnayperBot (start komandasi) uchun ishlaydi
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
