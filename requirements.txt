@@ -5,3 +5,5 @@ ccxt
 flask
 google-generativeai
 feedparser
+motor
+dnspython

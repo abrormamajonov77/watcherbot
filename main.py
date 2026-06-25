@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 from datetime import datetime, timedelta
 import pandas as pd
@@ -14,6 +13,7 @@ from dotenv import load_dotenv
 import feedparser
 import google.generativeai as genai
 from keep_alive import keep_alive
+import motor.motor_asyncio
 
 # 1. Barcha web-server va asinxron orqa fon jarayonlarini yoqish (Render uchun)
 keep_alive()
@@ -30,10 +30,24 @@ GEMINI_KEY = os.getenv('GEMINI_KEY')
 TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@watcherguruuz')
 RSS_URL = os.getenv('RSS_URL', 'https://watcher.guru/news/feed')
 
+# 3-MongoDB (Ma'lumotlar bazasi)
+MONGO_URI = os.getenv('MONGO_URI')
+
 if not TOKEN or not WATCHER_TOKEN or not GEMINI_KEY:
     print("XATOLIK: .env yoki Variables faylida tokenlar to'liq emas!")
     print("Iltimos, TELEGRAM_BOT_TOKEN, BOT_TOKEN va GEMINI_KEY ni kiriting.")
     exit(1)
+
+if not MONGO_URI:
+    print("XATOLIK: MONGO_URI kiritilmagan! MongoDB ga ulanib bo'lmaydi. Dastur to'xtatildi.")
+    exit(1)
+
+# MongoDB ulanishi
+mongo_client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+db = mongo_client['sniper_bot_db']
+users_collection = db['users']
+signals_collection = db['signals']
+memory_collection = db['memory']
 
 # Ikkita alohida bot yasaladi
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
@@ -44,21 +58,18 @@ dp = Dispatcher()
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-def xotirani_oqish():
-    if os.path.exists("oxirgi_yangilik.txt"):
-        try:
-            with open("oxirgi_yangilik.txt", "r", encoding="utf-8") as f:
-                return f.read().strip()
-        except Exception:
-            pass
+async def xotirani_oqish():
+    doc = await memory_collection.find_one({"_id": "watcher_memory"})
+    if doc:
+        return doc.get("oxirgi_link", "")
     return ""
 
-def xotiraga_yozish(link):
-    try:
-        with open("oxirgi_yangilik.txt", "w", encoding="utf-8") as f:
-            f.write(link)
-    except Exception as e:
-        print(f"Xotiraga yozishda xatolik: {e}")
+async def xotiraga_yozish(link):
+    await memory_collection.update_one(
+        {"_id": "watcher_memory"},
+        {"$set": {"oxirgi_link": link}},
+        upsert=True
+    )
 
 async def check_news_loop():
     print("🚀 WatcherBot (2-motor) ishga tushdi! Sayt kuzatilmoqda...", flush=True)
@@ -68,12 +79,12 @@ async def check_news_loop():
             if feed.entries:
                 latest_news = feed.entries[0]
                 news_link = latest_news.link
-                oxirgi_link = xotirani_oqish()
+                oxirgi_link = await xotirani_oqish()
 
                 if news_link != oxirgi_link:
                     if oxirgi_link == "":
-                        print("🚀 Watcher: Birinchi marta ishga tushdi, xotira bo'sh. Faqat saqlaymiz.", flush=True)
-                        xotiraga_yozish(news_link)
+                        print("🚀 Watcher: Baza bo'sh, faqat yangilikni saqlaymiz.", flush=True)
+                        await xotiraga_yozish(news_link)
                     else:
                         print("🔔 Watcher: Yangi post topildi! Tarjima qilinmoqda...", flush=True)
                         title = latest_news.title
@@ -95,7 +106,7 @@ async def check_news_loop():
                         else:
                             await watcher_bot.send_message(chat_id=TARGET_CHANNEL, text=xabar, parse_mode="HTML")
                         
-                        xotiraga_yozish(news_link)
+                        await xotiraga_yozish(news_link)
                         print("✅ Watcher: Kanalga muvaffaqiyatli yuborildi!", flush=True)
         except Exception as e:
             print(f"❌ Watcher xatosi: {e}", flush=True)
@@ -104,22 +115,6 @@ async def check_news_loop():
 
 
 # --- SNAYPER BOT QISMI (MEXC SCANNER) ---
-
-USERS_FILE = 'users.json'
-SIGNALS_FILE = 'signals.json'
-
-def load_json(filename, default):
-    if not os.path.exists(filename): return default
-    with open(filename, 'r') as f:
-        try: return json.load(f)
-        except: return default
-
-def save_json(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=4)
-
-users = load_json(USERS_FILE, [])
-signals_db = load_json(SIGNALS_FILE, [])
 mexc = ccxt.mexc({'enableRateLimit': True})
 
 MIN_24H_VOLUME = 1_000_000
@@ -135,9 +130,14 @@ seen_signals = {}
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-    if user_id not in users:
-        users.append(user_id)
-        save_json(USERS_FILE, users)
+    
+    # Foydalanuvchini bazaga qo'shish
+    user_exists = await users_collection.find_one({"user_id": user_id})
+    if not user_exists:
+        await users_collection.insert_one({
+            "user_id": user_id,
+            "joined_at": datetime.now().isoformat()
+        })
     
     warning_text = (
         "⚠️ <b>DIQQAT - MOLIYAVIY MASLAHAT EMAS!</b> ⚠️\n\n"
@@ -152,6 +152,7 @@ async def cmd_start(message: types.Message):
     except Exception:
         await message.answer(warning_text)
 
+# AQLLI TARQATUVCHI (BROADCASTER)
 async def send_to_all(text, symbol=None):
     tv_url = f"https://www.tradingview.com/chart/?symbol=MEXC:{symbol.replace('/', '')}" if symbol else None
     reply_markup = None
@@ -159,11 +160,20 @@ async def send_to_all(text, symbol=None):
         kb = [[InlineKeyboardButton(text="📈 TradingView'da ko'rish", url=tv_url)]]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
-    for u in users:
+    cursor = users_collection.find({})
+    async for u_doc in cursor:
+        user_id = u_doc['user_id']
         try:
-            await bot.send_message(chat_id=u, text=text, reply_markup=reply_markup, link_preview_options=types.LinkPreviewOptions(is_disabled=True))
+            await bot.send_message(chat_id=user_id, text=text, reply_markup=reply_markup, link_preview_options=types.LinkPreviewOptions(is_disabled=True))
         except Exception as e:
-            print(f"[{symbol}] Telegram yuborishda xatolik user {u} uchun: {e}")
+            print(f"[{symbol}] Telegram yuborishda xatolik user {user_id} uchun: {e}")
+            # Agar botni bloklagan bo'lsa o'chirib tashlash mumkin
+            if "bot was blocked by the user" in str(e):
+                await users_collection.delete_one({"user_id": user_id})
+                
+        # Telegram blokirovkasidan (Spam limit) himoya! 
+        # 1 soniyada maksimum 30 taga ruxsat beradi. Biz 20 taga moslaymiz (0.05 * 20 = 1 sekund)
+        await asyncio.sleep(0.05) 
 
 async def analyze_symbol(symbol):
     async with sem:
@@ -217,12 +227,14 @@ async def analyze_symbol(symbol):
                     f"⚡️ <i>4H Trend o'sishda tasdiqlangan!</i>"
                 )
                 seen_signals[signal_key] = True
-                signals_db.append({
+                
+                # Bazaga yozish
+                await signals_collection.insert_one({
                     "symbol": symbol, "type": "LONG", "entry": entry,
                     "tp": tp, "sl": sl, "status": "PENDING",
                     "timestamp": datetime.now().isoformat()
                 })
-                save_json(SIGNALS_FILE, signals_db)
+                
                 await send_to_all(msg, symbol)
                 print(f"✅ Snayper LONG: {symbol}")
                 
@@ -243,12 +255,14 @@ async def analyze_symbol(symbol):
                     f"⚡️ <i>4H Trend qulashda tasdiqlangan!</i>"
                 )
                 seen_signals[signal_key] = True
-                signals_db.append({
+                
+                # Bazaga yozish
+                await signals_collection.insert_one({
                     "symbol": symbol, "type": "SHORT", "entry": entry,
                     "tp": tp, "sl": sl, "status": "PENDING",
                     "timestamp": datetime.now().isoformat()
                 })
-                save_json(SIGNALS_FILE, signals_db)
+                
                 await send_to_all(msg, symbol)
                 print(f"🚨 Snayper SHORT: {symbol}")
                 
@@ -274,33 +288,28 @@ async def scanner_loop():
 async def background_checker():
     while True:
         try:
-            changed = False
-            for sig in signals_db:
-                if sig['status'] == 'PENDING':
-                    try:
-                        ticker = await mexc.fetch_ticker(sig['symbol'])
-                        current_price = ticker['last']
+            cursor = signals_collection.find({"status": "PENDING"})
+            async for sig in cursor:
+                try:
+                    ticker = await mexc.fetch_ticker(sig['symbol'])
+                    current_price = ticker['last']
+                    
+                    new_status = None
+                    if sig['type'] == 'LONG':
+                        if current_price >= sig['tp']: new_status = 'WIN'
+                        elif current_price <= sig['sl']: new_status = 'LOSS'
+                    elif sig['type'] == 'SHORT':
+                        if current_price <= sig['tp']: new_status = 'WIN'
+                        elif current_price >= sig['sl']: new_status = 'LOSS'
                         
-                        if sig['type'] == 'LONG':
-                            if current_price >= sig['tp']:
-                                sig['status'] = 'WIN'
-                                changed = True
-                            elif current_price <= sig['sl']:
-                                sig['status'] = 'LOSS'
-                                changed = True
-                        elif sig['type'] == 'SHORT':
-                            if current_price <= sig['tp']:
-                                sig['status'] = 'WIN'
-                                changed = True
-                            elif current_price >= sig['sl']:
-                                sig['status'] = 'LOSS'
-                                changed = True
-                    except:
-                        pass
-            
-            if changed:
-                save_json(SIGNALS_FILE, signals_db)
-                
+                    if new_status:
+                        await signals_collection.update_one(
+                            {"_id": sig["_id"]},
+                            {"$set": {"status": new_status}}
+                        )
+                        print(f"📌 Signal yopildi: {sig['symbol']} -> {new_status}")
+                except Exception:
+                    pass
         except Exception:
             pass
             
@@ -309,14 +318,16 @@ async def background_checker():
 async def weekly_reporter():
     while True:
         now = datetime.now()
+        # Yakshanba kuni soat 23:50 da yuboriladi
         if now.weekday() == 6 and now.hour == 23 and 50 <= now.minute <= 59:
             last_week = now - timedelta(days=7)
             total, wins, losses = 0, 0, 0
             
-            for sig in signals_db:
+            cursor = signals_collection.find({"status": {"$in": ["WIN", "LOSS"]}})
+            async for sig in cursor:
                 try:
                     sig_date = datetime.fromisoformat(sig['timestamp'])
-                    if sig_date > last_week and sig['status'] in ['WIN', 'LOSS']:
+                    if sig_date > last_week:
                         total += 1
                         if sig['status'] == 'WIN': wins += 1
                         if sig['status'] == 'LOSS': losses += 1
