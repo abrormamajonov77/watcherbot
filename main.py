@@ -62,6 +62,24 @@ dp = Dispatcher()
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
+async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, trend):
+    prompt = (
+        f"Siz professional kripto tahlilchisiz. Moliyaviy maslahat bermaysiz, faqat texnik xulosa qilasiz.\n"
+        f"Tanga: {symbol}\n"
+        f"Signal turi: {signal_type} (15 daqiqalik taymfreym)\n"
+        f"RSI (14) kuchi: {rsi:.1f}\n"
+        f"Hajm o'sishi: {volume_spike:.1f} barobar\n"
+        f"4H Trend: {'O\'sish (Bullish)' if trend else 'Qulash (Bearish)'}\n\n"
+        f"Vazifa: Yuqoridagi raqamlarga asoslanib, ushbu holat bo'yicha 1 yoki 2 ta gapdan iborat qisqa, xolis texnik xulosa yozing. "
+        f"Tarjima yoki tushuntirish kerak emas, faqat o'zbek tilida xulosa bering."
+    )
+    try:
+        response = await model.generate_content_async(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"AI Xatolik: {e}")
+        return "Bozor holatini qat'iy risk-menejment bilan kuzatish tavsiya etiladi."
+
 async def xotirani_oqish():
     doc = await memory_collection.find_one({"_id": "watcher_memory"})
     if doc:
@@ -94,8 +112,11 @@ async def check_news_loop():
                         title = latest_news.title
                         prompt = f"Ushbu inglizcha moliyaviy yangilik sarlavhasini o'zbek tiliga professional, moliya jurnalistlari tilida tarjima qil. Ortiqcha gap qo'shma, faqat tarjimani ber.\nSarlavha: {title}"
                         
-                        response = model.generate_content(prompt)
-                        tarjima = response.text.strip()
+                        try:
+                            response = await model.generate_content_async(prompt)
+                            tarjima = response.text.strip()
+                        except Exception:
+                            tarjima = title
                         
                         xabar = f"📰 <b>{tarjima}</b>\n\n👉 <a href='{news_link}'>Batafsil o'qish</a>\n\n🇺🇿 {TARGET_CHANNEL}"
 
@@ -221,14 +242,17 @@ async def analyze_symbol(symbol):
                 risk = entry - sl
                 tp = entry + (risk * 2)
                 
+                ai_text = await get_ai_technical_analysis(symbol, "LONG", current_rsi, volume_spike, macro_trend_up)
+                
                 msg = (
                     f"🚀 <b>{symbol}</b> | 15M Breakout (LONG)\n\n"
                     f"💵 <b>Kirish narxi:</b> ${entry:.4f}\n"
                     f"🎯 <b>Take-Profit:</b> ${tp:.4f}\n"
                     f"🛑 <b>Stop-Loss:</b> ${sl:.4f}\n\n"
                     f"📈 <b>RSI kuchi:</b> {current_rsi:.1f}\n"
-                    f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x o'sish\n\n"
-                    f"⚡️ <i>4H Trend o'sishda tasdiqlangan!</i>"
+                    f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x o'sish\n"
+                    f"⚡️ <i>4H Trend o'sishda tasdiqlangan!</i>\n\n"
+                    f"🤖 <b>AI Xulosasi:</b> <i>{ai_text}</i>"
                 )
                 seen_signals[signal_key] = True
                 
@@ -249,14 +273,17 @@ async def analyze_symbol(symbol):
                 risk = sl - entry
                 tp = entry - (risk * 2)
                 
+                ai_text = await get_ai_technical_analysis(symbol, "SHORT", current_rsi, volume_spike, macro_trend_up)
+                
                 msg = (
                     f"🩸 <b>{symbol}</b> | 15M Breakdown (SHORT)\n\n"
                     f"💵 <b>Kirish narxi:</b> ${entry:.4f}\n"
                     f"🎯 <b>Take-Profit:</b> ${tp:.4f}\n"
                     f"🛑 <b>Stop-Loss:</b> ${sl:.4f}\n\n"
                     f"📉 <b>RSI kuchi:</b> {current_rsi:.1f}\n"
-                    f"📊 <b>Chiqib ketgan hajm:</b> {volume_spike:.1f}x o'sish\n\n"
-                    f"⚡️ <i>4H Trend qulashda tasdiqlangan!</i>"
+                    f"📊 <b>Chiqib ketgan hajm:</b> {volume_spike:.1f}x o'sish\n"
+                    f"⚡️ <i>4H Trend qulashda tasdiqlangan!</i>\n\n"
+                    f"🤖 <b>AI Xulosasi:</b> <i>{ai_text}</i>"
                 )
                 seen_signals[signal_key] = True
                 
@@ -322,8 +349,8 @@ async def background_checker():
 async def weekly_reporter():
     while True:
         now = datetime.now()
-        # Yakshanba kuni soat 23:50 da yuboriladi
-        if now.weekday() == 6 and now.hour == 23 and 50 <= now.minute <= 59:
+        # Dushanba kuni soat 07:00 da yuboriladi
+        if now.weekday() == 0 and now.hour == 7 and 0 <= now.minute <= 9:
             last_week = now - timedelta(days=7)
             total, wins, losses = 0, 0, 0
             
@@ -339,12 +366,27 @@ async def weekly_reporter():
             
             if total > 0:
                 win_rate = (wins / total) * 100
+                prompt = (
+                    f"Siz kriptotreyder botining professional tahlilchisisiz. Haftalik hisobot:\n"
+                    f"Jami signallar: {total} ta\n"
+                    f"Foyda (Take-Profit): {wins} ta\n"
+                    f"Zarar (Stop-Loss): {losses} ta\n"
+                    f"Aniqlik (WinRate): {win_rate:.1f}%\n"
+                    f"Vazifa: Ushbu natijaga qarab obunachilarga 1-2 gaplik xolis xulosa va kelasi haftaga ehtiyotkorlik maslahatini yozing. Faqat o'zbek tilida."
+                )
+                try:
+                    response = await model.generate_content_async(prompt)
+                    ai_report = response.text.strip()
+                except:
+                    ai_report = "Tavakkalchilikni me'yorda ushlagan holda, intizom bilan davom etish tavsiya qilinadi."
+                
                 report_msg = (
-                    "📊 <b>HAFTALIK HISOBOT</b> 📊\n\n"
-                    f"Yakunlangan haftada jami <b>{total} ta</b> signal yopildi.\n"
-                    f"✅ To'g'ri chiqqan: <b>{wins} ta</b>\n"
-                    f"❌ Xato chiqqan: <b>{losses} ta</b>\n\n"
-                    f"🏆 <b>Haftalik Aniqlik (WinRate): {win_rate:.1f}%</b>"
+                    "📊 <b>O'TGAN HAFTALIK SAVDO HISOBOTI</b> 📊\n\n"
+                    f"Yakunlangan haftada Snayper botimiz jami <b>{total} ta</b> signal yopdi.\n\n"
+                    f"🎯 <b>Take-Profit (Foyda) olinganlar:</b> {wins} ta\n"
+                    f"🛑 <b>Stop-Loss (Zarar) olinganlar:</b> {losses} ta\n"
+                    f"🏆 <b>Haftalik Aniqlik (WinRate): {win_rate:.1f}%</b>\n\n"
+                    f"🤖 <b>AI Xulosasi:</b> <i>{ai_report}</i>"
                 )
                 await send_to_all(report_msg)
             
