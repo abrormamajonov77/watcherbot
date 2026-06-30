@@ -62,18 +62,21 @@ dp = Dispatcher()
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, trend, market_state):
+async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, trend, market_state, is_pump=False):
+    pump_text = "DIQQAT! KATTA HAJM VA PUMP!" if is_pump else "O'rtacha"
     prompt = (
-        f"Siz professional kripto tahlilchisiz. Moliyaviy maslahat bermaysiz, faqat texnik xulosa qilasiz.\n"
+        f"Siz professional kripto tahlilchi va Wall Street treyderisiz.\n"
+        f"Vazifangiz: Berilgan raqamlar asosida ijodiy, takrorlanmas, o'zbek tilida professional texnik xulosa yozish. Qolipga tushib qolmang.\n\n"
         f"Tanga: {symbol}\n"
-        f"Signal turi: {signal_type} (15 daqiqalik taymfreym)\n"
-        f"RSI (14) kuchi: {rsi:.1f}\n"
-        f"Hajm o'sishi: {volume_spike:.1f} barobar\n"
-        f"4H Trend: {'O\'sish (Bullish)' if trend else 'Qulash (Bearish)'}\n"
-        f"Bozor volatilligi (ATR): {market_state}\n\n"
-        f"Vazifa: Yuqoridagi raqamlarga asoslanib qisqa, xolis texnik xulosa yozing.\n"
-        f"QAT'IY SHART: Agar Bozor volatilligi 'VOLATILE' bo'lsa, Stop-Loss nima uchun kengroq olinganini qisqacha izohlang. "
-        f"Agar Bozor volatilligi 'NORMAL' bo'lsa, qat'iyan faqatgina 'Bozor normal holatda, risk-menejment standart qoidalar asosida belgilandi' deb yozing. Ortiqcha matn qo'shmang."
+        f"Signal: {signal_type}\n"
+        f"RSI: {rsi:.1f}\n"
+        f"Hajm o'sishi: {volume_spike:.1f} barobar ({pump_text})\n"
+        f"Trend (4H): {'O\'sish (Bullish)' if trend else 'Qulash (Bearish)'}\n"
+        f"Volatillik: {market_state}\n\n"
+        f"Xulosani albatta quyidagi 3 ta qismga bo'lib yozing (Har safar turlicha so'zlar ishlating):\n"
+        f"📉 Bozor Konyukturasi: (Nega signal olingani haqida professional fikr)\n"
+        f"⚠️ Risk Menejmenti: (Volatillikka qarab xavf holati qanday)\n"
+        f"🎯 Kutilayotgan Harakat: (Narxning maqsadi)\n"
     )
     try:
         response = await model.generate_content_async(prompt)
@@ -205,20 +208,25 @@ async def send_to_all(text, symbol=None):
 async def analyze_symbol(symbol):
     async with sem:
         try:
-            ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe=MACRO_TIMEFRAME, limit=10)
-            if len(ohlcv_4h) < 10: return
+            ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe=MACRO_TIMEFRAME, limit=100)
+            if len(ohlcv_4h) < 60: return
             
             df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df_4h['ema9'] = ta.ema(df_4h['close'], length=9)
-            if pd.isna(df_4h['ema9'].iloc[-2]): return
-            macro_trend_up = df_4h['close'].iloc[-2] > df_4h['ema9'].iloc[-2]
+            df_4h['ema50'] = ta.ema(df_4h['close'], length=50)
+            if pd.isna(df_4h['ema50'].iloc[-2]): return
+            macro_trend_up = df_4h['close'].iloc[-2] > df_4h['ema50'].iloc[-2]
             
-            ohlcv = await mexc.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=30)
-            if len(ohlcv) < (PAST_CANDLES + 2): return
+            ohlcv = await mexc.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=60)
+            if len(ohlcv) < (PAST_CANDLES + 20): return
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['rsi'] = ta.rsi(df['close'], length=14)
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+            adx_data = ta.adx(df['high'], df['low'], df['close'], length=14)
+            if adx_data is not None and 'ADX_14' in adx_data.columns:
+                df['adx'] = adx_data['ADX_14']
+            else:
+                df['adx'] = 0
             
             closed_candle = df.iloc[-2]
             prev_candles = df.iloc[-(PAST_CANDLES+2):-2]
@@ -227,16 +235,22 @@ async def analyze_symbol(symbol):
             current_volume = closed_candle['volume']
             current_rsi = closed_candle['rsi']
             current_atr = closed_candle['atr']
+            current_adx = closed_candle['adx']
             timestamp = closed_candle['timestamp']
             
             avg_volume = prev_candles['volume'].mean()
             resistance_high = prev_candles['high'].max()
             support_low = prev_candles['low'].min()
             
-            if pd.isna(current_atr): return
+            if pd.isna(current_atr) or pd.isna(current_adx): return
             
+            usdt_volume = current_volume * current_close
             if current_volume < (avg_volume * VOLUME_SPIKE_X): return
             volume_spike = current_volume / avg_volume
+            
+            is_pump = (volume_spike >= 5.0) and (usdt_volume >= 100000)
+            
+            if not is_pump and current_adx < 25: return
             
             atr_percent = (current_atr / current_close) * 100
             market_state = "VOLATILE" if atr_percent > 0.5 else "NORMAL"
@@ -244,13 +258,13 @@ async def analyze_symbol(symbol):
             signal_key = f"{symbol}_{timestamp}"
             if signal_key in seen_signals: return
             
-            if current_close > resistance_high and macro_trend_up and current_rsi < 75:
+            if current_close > resistance_high and (macro_trend_up or is_pump) and (current_rsi < 85 if is_pump else current_rsi < 75):
                 entry = current_close
                 sl = entry - (current_atr * 1.5)
                 risk = entry - sl
                 tp = entry + (current_atr * 3.0)
                 
-                ai_text = await get_ai_technical_analysis(symbol, "LONG", current_rsi, volume_spike, macro_trend_up, market_state)
+                ai_text = await get_ai_technical_analysis(symbol, "LONG", current_rsi, volume_spike, macro_trend_up, market_state, is_pump)
                 
                 msg = (
                     f"🚀 <b>{symbol}</b> | 15M Breakout (LONG)\n\n"
@@ -274,13 +288,13 @@ async def analyze_symbol(symbol):
                 await send_to_all(msg, symbol)
                 print(f"✅ Snayper LONG: {symbol}")
                 
-            elif current_close < support_low and not macro_trend_up and current_rsi > 25:
+            elif current_close < support_low and (not macro_trend_up or is_pump) and (current_rsi > 15 if is_pump else current_rsi > 25):
                 entry = current_close
                 sl = entry + (current_atr * 1.5)
                 risk = sl - entry
                 tp = entry - (current_atr * 3.0)
                 
-                ai_text = await get_ai_technical_analysis(symbol, "SHORT", current_rsi, volume_spike, macro_trend_up, market_state)
+                ai_text = await get_ai_technical_analysis(symbol, "SHORT", current_rsi, volume_spike, macro_trend_up, market_state, is_pump)
                 
                 msg = (
                     f"🩸 <b>{symbol}</b> | 15M Breakdown (SHORT)\n\n"
