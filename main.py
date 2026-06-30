@@ -65,7 +65,7 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, trend, market_state, is_pump=False):
     pump_text = "DIQQAT! KATTA HAJM VA PUMP!" if is_pump else "O'rtacha"
     prompt = (
-        f"Siz professional kripto tahlilchi va Wall Street treyderisiz.\n"
+        f"Siz professional kripto tahlilchi va Wall Street treyderisiz. DIQQAT: Siz qat'iyan moliyaviy maslahat bermaysiz, faqat obyektiv texnik xulosa berasiz.\n"
         f"Vazifangiz: Berilgan raqamlar asosida ijodiy, takrorlanmas, o'zbek tilida professional texnik xulosa yozish. Qolipga tushib qolmang.\n\n"
         f"Tanga: {symbol}\n"
         f"Signal: {signal_type}\n"
@@ -82,7 +82,7 @@ async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, tren
         response = await model.generate_content_async(prompt)
         return response.text.strip()
     except Exception as e:
-        print(f"AI Xatolik: {e}")
+        print(f"AI Xatolik ({symbol}): {e}", flush=True)
         return "Bozor holatini qat'iy risk-menejment bilan kuzatish tavsiya etiladi."
 
 async def xotirani_oqish():
