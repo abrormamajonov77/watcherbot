@@ -79,7 +79,16 @@ async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, tren
         f"🎯 Kutilayotgan Harakat: (Narxning maqsadi)\n"
     )
     try:
-        response = await model.generate_content_async(prompt)
+        safety_settings = [
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        ]
+        response = await model.generate_content_async(prompt, safety_settings=safety_settings)
+        if not response.parts:
+            print(f"AI Xatolik ({symbol}): API blokladi yoki javob bo'sh", flush=True)
+            return "Bozor holatini qat'iy risk-menejment bilan kuzatish tavsiya etiladi."
         return response.text.strip()
     except Exception as e:
         print(f"AI Xatolik ({symbol}): {e}", flush=True)
