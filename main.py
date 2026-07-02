@@ -65,18 +65,20 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, trend, market_state, is_pump=False):
     pump_text = "DIQQAT! KATTA HAJM VA PUMP!" if is_pump else "O'rtacha"
     prompt = (
-        f"Siz professional kripto tahlilchi va Wall Street treyderisiz. DIQQAT: Siz qat'iyan moliyaviy maslahat bermaysiz, faqat obyektiv texnik xulosa berasiz.\n"
-        f"Vazifangiz: Berilgan raqamlar asosida ijodiy, takrorlanmas, o'zbek tilida professional texnik xulosa yozish. Qolipga tushib qolmang.\n\n"
-        f"Tanga: {symbol}\n"
-        f"Signal: {signal_type}\n"
-        f"RSI: {rsi:.1f}\n"
-        f"Hajm o'sishi: {volume_spike:.1f} barobar ({pump_text})\n"
-        f"Trend (4H): {'O\'sish (Bullish)' if trend else 'Qulash (Bearish)'}\n"
-        f"Volatillik: {market_state}\n\n"
-        f"Xulosani albatta quyidagi 3 ta qismga bo'lib yozing (Har safar turlicha so'zlar ishlating):\n"
-        f"📉 Bozor Konyukturasi: (Nega signal olingani haqida professional fikr)\n"
-        f"⚠️ Risk Menejmenti: (Volatillikka qarab xavf holati qanday)\n"
-        f"🎯 Kutilayotgan Harakat: (Narxning maqsadi)\n"
+        f"Sen tajribali ma'lumotlar tahlilchisisan (Data Analyst). Vazifang - faqat berilgan raqamlarni tasvirlab berish.\n"
+        f"DIQQAT: Hech qanday moliya, investitsiya yoki savdo maslahati BERMA! Bu faqat ta'limiy statistika.\n"
+        f"Berilgan parametrlar asosida har safar o'ziga xos va takrorlanmas so'zlar bilan obyektiv xulosa yoz.\n\n"
+        f"Ma'lumotlar:\n"
+        f"- Tanga: {symbol}\n"
+        f"- Holat (yo'nalish): {signal_type}\n"
+        f"- RSI ko'rsatkichi: {rsi:.1f}\n"
+        f"- Hajm o'zgarishi: {volume_spike:.1f} barobar ({pump_text})\n"
+        f"- Makro trend (4H): {'O\'sish (Bullish)' if trend else 'Qulash (Bearish)'}\n"
+        f"- Volatillik (ATR): {market_state}\n\n"
+        f"Xulosa quyidagi 3 ta qismdan iborat bo'lsin va sof o'zbek tilida yozilsin:\n"
+        f"📉 Texnik Holat: (RSI, Trend va Hajm qanday holatda ekanini tasvirlang)\n"
+        f"⚠️ Volatillik Darajasi: (Bozorda tebranish qanday, ehtimoliy xavf qancha)\n"
+        f"🔍 Ehtimoliy Ssenariy: (Ushbu texnik holat odatda qanday davom etishini faqat statistik jihatdan ayting)\n"
     )
     try:
         safety_settings = [
@@ -383,6 +385,7 @@ async def weekly_reporter():
         if now.weekday() == 0 and now.hour == 7 and 0 <= now.minute <= 9:
             last_week = now - timedelta(days=7)
             total, wins, losses = 0, 0, 0
+            coin_stats = {}
             
             cursor = signals_collection.find({"status": {"$in": ["WIN", "LOSS"]}})
             async for sig in cursor:
@@ -390,19 +393,34 @@ async def weekly_reporter():
                     sig_date = datetime.fromisoformat(sig['timestamp'])
                     if sig_date > last_week:
                         total += 1
-                        if sig['status'] == 'WIN': wins += 1
-                        if sig['status'] == 'LOSS': losses += 1
+                        symbol = sig.get('symbol', 'Noma\'lum')
+                        if symbol not in coin_stats:
+                            coin_stats[symbol] = {'WIN': 0, 'LOSS': 0}
+                        
+                        if sig['status'] == 'WIN': 
+                            wins += 1
+                            coin_stats[symbol]['WIN'] += 1
+                        if sig['status'] == 'LOSS': 
+                            losses += 1
+                            coin_stats[symbol]['LOSS'] += 1
                 except: pass
             
             if total > 0:
                 win_rate = (wins / total) * 100
+                
+                coin_text = "\n🪙 <b>Tangalar bo'yicha natijalar:</b>\n"
+                for sym, stats in coin_stats.items():
+                    w = stats['WIN']
+                    l = stats['LOSS']
+                    coin_text += f"▪️ {sym}: {w} ✅ | {l} ❌\n"
+                    
                 prompt = (
-                    f"Siz kriptotreyder botining professional tahlilchisisiz. Haftalik hisobot:\n"
-                    f"Jami signallar: {total} ta\n"
-                    f"Foyda (Take-Profit): {wins} ta\n"
-                    f"Zarar (Stop-Loss): {losses} ta\n"
+                    f"Sen statistik ma'lumotlar tahlilchisisan (Data Analyst). Haftalik natijalar:\n"
+                    f"Jami holatlar: {total} ta\n"
+                    f"Muvaffaqiyatli: {wins} ta\n"
+                    f"Muvaffaqiyatsiz: {losses} ta\n"
                     f"Aniqlik (WinRate): {win_rate:.1f}%\n"
-                    f"Vazifa: Ushbu natijaga qarab obunachilarga 1-2 gaplik xolis xulosa va kelasi haftaga ehtiyotkorlik maslahatini yozing. Faqat o'zbek tilida."
+                    f"Vazifa: Olingan statistikani tahlil qilib, o'quvchilarga obyektiv va ta'limiy xulosa yozib ber. Hech qanday savdo yoki sarmoya maslahati bermasdan, ehtiyotkorlik bilan yondashish kerakligini, o'zbek tilida 1-2 gapda tasvirlab ber."
                 )
                 try:
                     response = await model.generate_content_async(prompt)
@@ -415,7 +433,8 @@ async def weekly_reporter():
                     f"Yakunlangan haftada Snayper botimiz jami <b>{total} ta</b> signal yopdi.\n\n"
                     f"🎯 <b>Take-Profit (Foyda) olinganlar:</b> {wins} ta\n"
                     f"🛑 <b>Stop-Loss (Zarar) olinganlar:</b> {losses} ta\n"
-                    f"🏆 <b>Haftalik Aniqlik (WinRate): {win_rate:.1f}%</b>\n\n"
+                    f"🏆 <b>Haftalik Aniqlik (WinRate): {win_rate:.1f}%</b>\n"
+                    f"{coin_text}\n"
                     f"🤖 <b>AI Xulosasi:</b> <i>{ai_report}</i>"
                 )
                 await send_to_all(report_msg)
