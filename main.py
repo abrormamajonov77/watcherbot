@@ -64,21 +64,21 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 
 async def get_ai_technical_analysis(symbol, signal_type, rsi, volume_spike, trend, market_state, is_pump=False):
     pump_text = "DIQQAT! KATTA HAJM VA PUMP!" if is_pump else "O'rtacha"
+    safe_signal = "Yuqoriga (Upward)" if signal_type == "LONG" else "Pastga (Downward)"
     prompt = (
-        f"Sen tajribali ma'lumotlar tahlilchisisan (Data Analyst). Vazifang - faqat berilgan raqamlarni tasvirlab berish.\n"
-        f"DIQQAT: Hech qanday moliya, investitsiya yoki savdo maslahati BERMA! Bu faqat ta'limiy statistika.\n"
-        f"Berilgan parametrlar asosida har safar o'ziga xos va takrorlanmas so'zlar bilan obyektiv xulosa yoz.\n\n"
+        f"Sen statistik ma'lumotlar tahlilchisisan. Vazifang faqat matematik va statistik ko'rsatkichlarni ilmiy-akademik tilda tasvirlab berish.\n"
+        f"Ushbu ma'lumotlar asosida har safar turlicha so'zlar bilan obyektiv xulosa yoz.\n\n"
         f"Ma'lumotlar:\n"
-        f"- Tanga: {symbol}\n"
-        f"- Holat (yo'nalish): {signal_type}\n"
+        f"- Aktiv nomi: {symbol}\n"
+        f"- Vektor: {safe_signal}\n"
         f"- RSI ko'rsatkichi: {rsi:.1f}\n"
         f"- Hajm o'zgarishi: {volume_spike:.1f} barobar ({pump_text})\n"
-        f"- Makro trend (4H): {'O\'sish (Bullish)' if trend else 'Qulash (Bearish)'}\n"
+        f"- Makro trend (4H): {'Musbat' if trend else 'Manfiy'}\n"
         f"- Volatillik (ATR): {market_state}\n\n"
-        f"Xulosa quyidagi 3 ta qismdan iborat bo'lsin va sof o'zbek tilida yozilsin:\n"
-        f"📉 Texnik Holat: (RSI, Trend va Hajm qanday holatda ekanini tasvirlang)\n"
-        f"⚠️ Volatillik Darajasi: (Bozorda tebranish qanday, ehtimoliy xavf qancha)\n"
-        f"🔍 Ehtimoliy Ssenariy: (Ushbu texnik holat odatda qanday davom etishini faqat statistik jihatdan ayting)\n"
+        f"Xulosa quyidagi 3 ta qismdan iborat bo'lsin (sof o'zbek tilida):\n"
+        f"📉 Texnik Holat: (RSI, Trend va Hajmning matematik holatini tasvirlang)\n"
+        f"⚠️ Volatillik Darajasi: (Bozorda tebranish darajasi qanday ekanligi)\n"
+        f"🔍 Statistik Ehtimollik: (Ushbu matematik holat odatda qanday davom etishini tasvirlang)\n"
     )
     try:
         safety_settings = [
