@@ -25,4 +25,8 @@ WinRate juda past (24%) bo'lib ketgani va "Soxta yorib o'tishlarga" aldanmaslik 
 *   **Muammo va Yechim:** Render'da Zero-Downtime Deployment sababli `TelegramConflictError` kelib chiqqan edi. Yechim: `Suspend Web Service` -> `Resume Web Service`.
 *   Bot faqat **1 Million dollardan ($1,000,000)** yuqori kunlik hajmi bor tangalarni tekshiradi.
 
+## 5. Yangilanishlar (2026 Iyul boshlari)
+*   **AI Prompting (Persona o'zgarishi):** Gemini 1.5 xavfsizlik filtriga tushib bloklanmaslik uchun botdagi AI roli "Wall Street Trader"dan "Data Analyst"ga (Ma'lumotlar tahlilchisi) o'zgartirildi. AI ga qat'iyan moliyaviy maslahat bermasligi uqtirildi va u endi faqat raqamlarga asoslangan ta'limiy, sof statistik xulosalar yozishga o'tdi.
+*   **Haftalik Hisobotda Tangalarni Guruhlash:** `weekly_reporter` funksiyasiga lug'at (`coin_stats`) algoritmi qo'shildi. Bu orqali haftalik hisobotda har bir tanga kesimida alohida nechta muvaffaqiyatli (WIN) va nechta muvaffaqiyatsiz (LOSS) savdo bo'lgani guruhlab chiqariladi (Masalan: `▪️ BTC/USDT: 3 ✅ | 1 ❌`). 
+
 Ushbu ma'lumotlar orqali keyingi suhbatlarni xuddi shu yerdan bemalol davom ettirishimiz mumkin!
