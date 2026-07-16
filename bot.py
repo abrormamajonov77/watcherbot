@@ -152,18 +152,29 @@ async def cmd_start(message: types.Message):
     except Exception:
         await message.answer(warning_text)
 
-async def send_to_all(text, symbol=None):
+async def send_to_all(text, symbol=None, reply_to_message_ids=None):
     tv_url = f"https://www.tradingview.com/chart/?symbol=MEXC:{symbol.replace('/', '')}" if symbol else None
     reply_markup = None
     if tv_url:
         kb = [[InlineKeyboardButton(text="📈 TradingView'da ko'rish", url=tv_url)]]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
+    sent_messages = {}
     for u in users:
         try:
-            await bot.send_message(chat_id=u, text=text, reply_markup=reply_markup, link_preview_options=types.LinkPreviewOptions(is_disabled=True))
+            reply_to = reply_to_message_ids.get(str(u)) if reply_to_message_ids else None
+            sent_msg = await bot.send_message(
+                chat_id=u, 
+                text=text, 
+                reply_markup=reply_markup, 
+                reply_to_message_id=reply_to,
+                link_preview_options=types.LinkPreviewOptions(is_disabled=True)
+            )
+            sent_messages[str(u)] = sent_msg.message_id
         except Exception as e:
             print(f"[{symbol}] Telegram yuborishda xatolik user {u} uchun: {e}")
+            
+    return sent_messages
 
 async def analyze_symbol(symbol):
     async with sem:
@@ -176,11 +187,13 @@ async def analyze_symbol(symbol):
             if pd.isna(df_4h['ema9'].iloc[-2]): return
             macro_trend_up = df_4h['close'].iloc[-2] > df_4h['ema9'].iloc[-2]
             
-            ohlcv = await mexc.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=30)
+            ohlcv = await mexc.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
             if len(ohlcv) < (PAST_CANDLES + 2): return
             
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['rsi'] = ta.rsi(df['close'], length=14)
+            df['ema20'] = ta.ema(df['close'], length=20)
+            df['ema50'] = ta.ema(df['close'], length=50)
             
             closed_candle = df.iloc[-2]
             prev_candles = df.iloc[-(PAST_CANDLES+2):-2]
@@ -188,6 +201,8 @@ async def analyze_symbol(symbol):
             current_close = closed_candle['close']
             current_volume = closed_candle['volume']
             current_rsi = closed_candle['rsi']
+            ema20_val = closed_candle['ema20']
+            ema50_val = closed_candle['ema50']
             timestamp = closed_candle['timestamp']
             
             avg_volume = prev_candles['volume'].mean()
@@ -200,7 +215,7 @@ async def analyze_symbol(symbol):
             signal_key = f"{symbol}_{timestamp}"
             if signal_key in seen_signals: return
             
-            if current_close > resistance_high and macro_trend_up and current_rsi < 75:
+            if current_close > resistance_high and macro_trend_up and current_rsi < 70 and ema20_val > ema50_val:
                 entry = current_close
                 sl = closed_candle['low'] * 0.995 
                 if sl >= entry: sl = entry * 0.99 
@@ -214,19 +229,24 @@ async def analyze_symbol(symbol):
                     f"🛑 <b>Stop-Loss:</b> ${sl:.4f}\n\n"
                     f"📈 <b>RSI kuchi:</b> {current_rsi:.1f}\n"
                     f"📊 <b>Kirgan hajm:</b> {volume_spike:.1f}x o'sish\n\n"
-                    f"⚡️ <i>4H Trend o'sishda tasdiqlangan!</i>"
+                    f"⚡️ <i>Trend: 4H va 15M o'sishda tasdiqlangan!</i>"
                 )
                 seen_signals[signal_key] = True
-                signals_db.append({
+                
+                sig_data = {
                     "symbol": symbol, "type": "LONG", "entry": entry,
                     "tp": tp, "sl": sl, "status": "PENDING",
-                    "timestamp": datetime.now().isoformat()
-                })
+                    "timestamp": datetime.now().isoformat(),
+                    "message_ids": {}
+                }
+                signals_db.append(sig_data)
+                sent_msgs = await send_to_all(msg, symbol)
+                sig_data["message_ids"] = sent_msgs
                 save_json(SIGNALS_FILE, signals_db)
-                await send_to_all(msg, symbol)
+                
                 print(f"✅ Snayper LONG: {symbol}")
                 
-            elif current_close < support_low and not macro_trend_up and current_rsi > 25:
+            elif current_close < support_low and not macro_trend_up and current_rsi > 30 and ema20_val < ema50_val:
                 entry = current_close
                 sl = closed_candle['high'] * 1.005
                 if sl <= entry: sl = entry * 1.01
@@ -243,26 +263,45 @@ async def analyze_symbol(symbol):
                     f"⚡️ <i>4H Trend qulashda tasdiqlangan!</i>"
                 )
                 seen_signals[signal_key] = True
-                signals_db.append({
+                
+                sig_data = {
                     "symbol": symbol, "type": "SHORT", "entry": entry,
                     "tp": tp, "sl": sl, "status": "PENDING",
-                    "timestamp": datetime.now().isoformat()
-                })
+                    "timestamp": datetime.now().isoformat(),
+                    "message_ids": {}
+                }
+                signals_db.append(sig_data)
+                sent_msgs = await send_to_all(msg, symbol)
+                sig_data["message_ids"] = sent_msgs
                 save_json(SIGNALS_FILE, signals_db)
-                await send_to_all(msg, symbol)
+                
                 print(f"🚨 Snayper SHORT: {symbol}")
                 
         except Exception as e:
             pass
 
+markets_cache = None
+
 async def scanner_loop():
+    global markets_cache
     print("🚀 SnayperBot (1-motor) ishga tushdi! MEXC skanerlanmoqda...", flush=True)
+    iteration = 0
     while True:
         try:
             tickers = await mexc.fetch_tickers()
-            markets = await mexc.load_markets()
+            if markets_cache is None or iteration % 60 == 0:
+                markets_cache = await mexc.load_markets()
+            iteration += 1
             
-            valid_symbols = [s for s, t in tickers.items() if s.endswith('/USDT') and markets.get(s, {}).get('spot') and t.get('quoteVolume', 0) >= MIN_24H_VOLUME]
+            stablecoins = {'USDC/USDT', 'TUSD/USDT', 'USDD/USDT', 'DAI/USDT', 'FDUSD/USDT', 'PYUSD/USDT', 'BUSD/USDT', 'USDP/USDT', 'EURT/USDT'}
+            
+            valid_symbols = [
+                s for s, t in tickers.items() 
+                if s.endswith('/USDT') 
+                and s not in stablecoins
+                and markets_cache.get(s, {}).get('spot') 
+                and t.get('quoteVolume', 0) >= MIN_24H_VOLUME
+            ]
             
             tasks = [analyze_symbol(sym) for sym in valid_symbols]
             await asyncio.gather(*tasks)
@@ -281,28 +320,40 @@ async def background_checker():
                         ticker = await mexc.fetch_ticker(sig['symbol'])
                         current_price = ticker['last']
                         
+                        hit_tp = False
+                        hit_sl = False
+                        
                         if sig['type'] == 'LONG':
                             if current_price >= sig['tp']:
-                                sig['status'] = 'WIN'
-                                changed = True
+                                hit_tp = True
                             elif current_price <= sig['sl']:
-                                sig['status'] = 'LOSS'
-                                changed = True
+                                hit_sl = True
                         elif sig['type'] == 'SHORT':
                             if current_price <= sig['tp']:
-                                sig['status'] = 'WIN'
-                                changed = True
+                                hit_tp = True
                             elif current_price >= sig['sl']:
-                                sig['status'] = 'LOSS'
-                                changed = True
-                    except:
-                        pass
+                                hit_sl = True
+                                
+                        if hit_tp:
+                            sig['status'] = 'WIN'
+                            changed = True
+                            sig_time = datetime.fromisoformat(sig['timestamp']).strftime('%Y-%m-%d %H:%M')
+                            msg = f"✅ <b>{sig['symbol']}</b> | {sig['type']} signali foyda bilan yopildi! (Take-Profit urildi) 🎯\n\n🕒 Signal berilgan vaqt: {sig_time}\n💰 Joriy narx: ${current_price:.4f}"
+                            await send_to_all(msg, sig['symbol'], reply_to_message_ids=sig.get('message_ids', {}))
+                        elif hit_sl:
+                            sig['status'] = 'LOSS'
+                            changed = True
+                            sig_time = datetime.fromisoformat(sig['timestamp']).strftime('%Y-%m-%d %H:%M')
+                            msg = f"❌ <b>{sig['symbol']}</b> | {sig['type']} signali zararda yopildi (Stop-Loss urildi) 🛑\n\n🕒 Signal berilgan vaqt: {sig_time}\n💰 Joriy narx: ${current_price:.4f}"
+                            await send_to_all(msg, sig['symbol'], reply_to_message_ids=sig.get('message_ids', {}))
+                    except Exception as e:
+                        print(f"Narxni tekshirishda xato {sig['symbol']}: {e}")
             
             if changed:
                 save_json(SIGNALS_FILE, signals_db)
                 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Background checker xatosi: {e}")
             
         await asyncio.sleep(300)
 
