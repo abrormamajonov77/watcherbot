@@ -1,98 +1,106 @@
-from keep_alive import keep_alive
-keep_alive()
-
 import asyncio
-import feedparser
-import google.generativeai as genai
-from aiogram import Bot
-import os
+import logging
+import ccxt.async_support as ccxt
+from aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# === SOZLAMALAR ===
-from dotenv import load_dotenv
-load_dotenv()
+from config import TELEGRAM_BOT_TOKEN, WATCHER_TOKEN
+from database import init_db, add_user, get_all_users
+from services.sniper_engine import sniper_scanner_loop
+from services.spot_engine import spot_scanner_loop
+from services.watcher_engine import check_news_loop
+from services.monitor_engine import background_checker, weekly_reporter, daily_reporter
+from keep_alive import keep_alive
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_KEY")
-TARGET_CHANNEL = os.getenv("TARGET_CHANNEL", "@watcherguruuz")
-RSS_URL = os.getenv("RSS_URL", "https://watcher.guru/news/feed")
+# Logging sozlari
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Sinalgan va barqaror tarjimon (gemini-1.5-flash) ga o'tdik!
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
-bot = Bot(token=BOT_TOKEN)
+# Ikkita alohida bot
+bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
+watcher_bot = Bot(token=WATCHER_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
+dp = Dispatcher()
 
-def xotirani_oqish():
-    if os.path.exists("oxirgi_yangilik.txt"):
-        try:
-            with open("oxirgi_yangilik.txt", "r", encoding="utf-8") as f:
-                return f.read().strip()
-        except Exception:
-            pass
-    return ""
+# CCXT MEXC Instance
+mexc = ccxt.mexc({'enableRateLimit': True})
 
-def xotiraga_yozish(link):
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
+    await add_user(user_id)
+    
+    warning_text = (
+        "⚠️ <b>DIQQAT - MOLIYAVIY MASLAHAT EMAS!</b> ⚠️\n\n"
+        "Ushbu bot faqatgina bozor holatini tahlil qilib, <b>yordamchi signallar</b> beradi. "
+        "Bot yuborgan signallar 100% to'g'ri chiqishiga kafolat yo'q. "
+        "Iltimos, har bir signalni o'zingiz qayta tahlil qiling va faqat o'z xavf-xataringiz ostida savdoga kiring!\n\n"
+        "<i>Bot sizga avtomatik signallarni shu yerga yuborishni boshlaydi (Snayper va Spot). Kutib turing... 🚀</i>"
+    )
+    image_url = "https://images.unsplash.com/photo-1621416894569-0f39ed31d247?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80"
     try:
-        with open("oxirgi_yangilik.txt", "w", encoding="utf-8") as f:
-            f.write(link)
-    except Exception as e:
-        print(f"Xotiraga yozishda xatolik: {e}")
+        await message.answer_photo(photo=image_url, caption=warning_text)
+    except Exception:
+        await message.answer(warning_text)
 
-async def check_news():
-    print("🌐 Watcher Guru sayti tekshirilmoqda...", flush=True)
-    feed = feedparser.parse(RSS_URL)
-
-    if not feed.entries:
-        return
-
-    latest_news = feed.entries[0]
-    news_link = latest_news.link
-    oxirgi_link = xotirani_oqish()
-
-    if news_link != oxirgi_link:
-        if oxirgi_link == "":
-            print("🚀 Birinchi marta ishga tushdi, xotira bo'sh. Eski yangiliklarni yubormaymiz, faqat saqlaymiz.", flush=True)
-            xotiraga_yozish(news_link)
-            return
-
-        print("🔔 Yangi post topildi! Tarjima qilinmoqda...", flush=True)
-        title = latest_news.title
-
-        prompt = f"Ushbu inglizcha moliyaviy yangilik sarlavhasini o'zbek tiliga professional, moliya jurnalistlari tilida tarjima qil. Ortiqcha gap qo'shma, faqat tarjimani ber.\nSarlavha: {title}"
-
+async def send_to_all_users(text, symbol=None, reply_to_message_ids=None):
+    """Barcha foydalanuvchilarga xabar yuborish (Snayper/Spot uchun)."""
+    tv_url = f"https://www.tradingview.com/chart/?symbol=MEXC:{symbol.replace('/', '')}" if symbol else None
+    reply_markup = None
+    if tv_url:
+        kb = [[InlineKeyboardButton(text="📈 TradingView'da ko'rish", url=tv_url)]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=kb)
+        
+    users = await get_all_users()
+    sent_messages = {}
+    
+    for u in users:
         try:
-            response = model.generate_content(prompt)
-            tarjima = response.text.strip()
-            
-            xabar = f"📰 {tarjima}\n\n👉 [Batafsil o'qish]({news_link})\n\n🇺🇿 {TARGET_CHANNEL}"
-
-            # Rasm bor-yo'qligini tekshirish
-            image_url = None
-            if hasattr(latest_news, 'media_content') and len(latest_news.media_content) > 0:
-                image_url = latest_news.media_content[0].get('url')
-            elif hasattr(latest_news, 'enclosures') and len(latest_news.enclosures) > 0:
-                image_url = latest_news.enclosures[0].get('href')
-
-            if image_url:
-                await bot.send_photo(chat_id=TARGET_CHANNEL, photo=image_url, caption=xabar, parse_mode="Markdown")
-            else:
-                await bot.send_message(chat_id=TARGET_CHANNEL, text=xabar, parse_mode="Markdown")
-            
-            xotiraga_yozish(news_link)
-            print("✅ Kanalga muvaffaqiyatli yuborildi!", flush=True)
+            reply_to = reply_to_message_ids.get(str(u)) if reply_to_message_ids else None
+            sent_msg = await bot.send_message(
+                chat_id=u, 
+                text=text, 
+                reply_markup=reply_markup, 
+                reply_to_message_id=reply_to,
+                link_preview_options=types.LinkPreviewOptions(is_disabled=True)
+            )
+            sent_messages[str(u)] = sent_msg.message_id
         except Exception as e:
-            print(f"❌ Xatolik yuz berdi: {e}", flush=True)
-    else:
-        print("Hozircha yangi post yo'q. Kutmoqdamiz...", flush=True)
+            logger.error(f"[{symbol}] Telegram yuborishda xatolik user {u} uchun: {e}")
+            
+    return sent_messages
 
 async def main():
-    print("🚀 'TANK' bot ishga tushdi! Sayt kuzatilmoqda...", flush=True)
-    while True:
-        try:
-            await check_news()
-        except Exception as e:
-            print(f"Asosiy xatolik: {e}", flush=True)
-        
-        await asyncio.sleep(180) 
+    logger.info("Bot tizimlari ishga tushirilmoqda...")
+    
+    # 1. Web server (Render/Heroku uchun)
+    keep_alive()
+    
+    # 2. Database inisializatsiyasi
+    await init_db()
+    
+    # 3. Asinxron tasklarni (dvigatellarni) yaratish
+    asyncio.create_task(sniper_scanner_loop(mexc, send_to_all_users))
+    asyncio.create_task(spot_scanner_loop(mexc, send_to_all_users))
+    asyncio.create_task(background_checker(mexc, send_to_all_users))
+    asyncio.create_task(weekly_reporter(send_to_all_users))
+    asyncio.create_task(daily_reporter(send_to_all_users))
+    asyncio.create_task(check_news_loop(watcher_bot))
+    
+    # 4. Telegram Bot polling
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await mexc.close()
+        await bot.session.close()
+        await watcher_bot.session.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot to'xtatildi (KeyboardInterrupt).")
