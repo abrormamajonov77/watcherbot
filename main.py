@@ -82,8 +82,13 @@ async def main():
     
     # 2. Database inisializatsiyasi
     await init_db()
-    
-    # 3. Asinxron tasklarni (dvigatellarni) yaratish
+
+    # 3. Webhookni o'chirish (polling bilan conflict bo'lmasin)
+    await bot.delete_webhook(drop_pending_updates=True)
+    await watcher_bot.delete_webhook(drop_pending_updates=True)
+    logger.info("✅ Webhooklar o'chirildi, polling rejimiga o'tildi.")
+
+    # 4. Asinxron tasklarni (dvigatellarni) yaratish
     asyncio.create_task(sniper_scanner_loop(mexc, send_to_all_users))
     asyncio.create_task(spot_scanner_loop(mexc, send_to_all_users))
     asyncio.create_task(background_checker(mexc, send_to_all_users))
