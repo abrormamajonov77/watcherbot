@@ -47,6 +47,20 @@ async def cmd_start(message: types.Message):
     except Exception:
         await message.answer(warning_text)
 
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    """Foydalanuvchi bot ishlayotganini tekshirishi uchun ping komandasi."""
+    status_msg = (
+        "✅ <b>Bot faol holatda ishlayapti!</b>\n\n"
+        "Barcha tizimlar joyida:\n"
+        "🚀 Snayper skaneri (15M/1H/4H)\n"
+        "🔭 Spot skaneri (1D)\n"
+        "📰 Yangiliklar (Watcher)\n"
+        "🛡 Monitor (TP/SL kuzatish)\n\n"
+        "<i>Bozorda qulay imkoniyat paydo bo'lishi bilan signal yuboriladi...</i>"
+    )
+    await message.answer(status_msg)
+
 async def send_to_all_users(text, symbol=None, reply_to_message_ids=None):
     """Barcha foydalanuvchilarga xabar yuborish (Snayper/Spot uchun)."""
     tv_url = f"https://www.tradingview.com/chart/?symbol=MEXC:{symbol.replace('/', '')}" if symbol else None
