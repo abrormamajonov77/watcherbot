@@ -1,4 +1,28 @@
-
+# Maxfiy ma'lumotlar
 .env
+
+# Eski fayllar
+*.bak
 users.json
 signals.json
+
+# Ma'lumotlar bazasi
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual muhit
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
