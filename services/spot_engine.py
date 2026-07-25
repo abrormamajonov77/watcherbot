@@ -52,7 +52,8 @@ async def analyze_spot_symbol(symbol, mexc, tickers):
                 seen_signals[signal_key] = True
                 
                 msg = (
-                    f"💎 <b>{symbol}</b> | SPOT Signali (1D Chart)\n\n"
+                    f"💎 <b>{symbol}</b> | SPOT Signali (1D Chart)\n"
+                    f"Ishonchlilik: ⭐⭐⭐⭐⭐ <i>(Uzoq muddatli)</i>\n\n"
                     f"💵 <b>Kirish narxi:</b> ${current_close:.5f}\n"
                     f"🎯 <b>Uzoq muddatli TP:</b> ${tp:.5f}\n"
                     f"🛑 <b>Stop-Loss:</b> ${sl:.5f}\n\n"
@@ -67,7 +68,8 @@ async def analyze_spot_symbol(symbol, mexc, tickers):
                     "entry": current_close,
                     "tp": tp,
                     "sl": sl,
-                    "message": msg
+                    "message": msg,
+                    "stars": 5
                 }
                 
     except Exception as e:
@@ -111,7 +113,7 @@ async def spot_scanner_loop(mexc, telegram_notifier_func):
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
                     await add_signal(
                         res['symbol'], res['type'], res['entry'], res['tp'], res['sl'], 
-                        "PENDING", datetime.now().isoformat(), sent_messages
+                        "PENDING", datetime.now().isoformat(), sent_messages, res['stars']
                     )
 
             await asyncio.sleep(3600) # Spot bot har 1 soatda 1 marta tekshiradi

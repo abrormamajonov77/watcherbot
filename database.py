@@ -22,9 +22,17 @@ async def init_db():
                 sl REAL,
                 status TEXT,
                 timestamp TEXT,
-                message_ids TEXT
+                message_ids TEXT,
+                stars INTEGER DEFAULT 5
             )
         ''')
+        
+        # Migratsiya: eski jadvallarga 'stars' ustunini qo'shish
+        try:
+            await db.execute("ALTER TABLE signals ADD COLUMN stars INTEGER DEFAULT 5")
+        except Exception:
+            pass # Ustun allaqachon bo'lishi mumkin
+            
         await db.commit()
 
 async def add_user(user_id: int):
@@ -38,13 +46,13 @@ async def get_all_users() -> list:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
-async def add_signal(symbol, sig_type, entry, tp, sl, status, timestamp, message_ids):
+async def add_signal(symbol, sig_type, entry, tp, sl, status, timestamp, message_ids, stars=5):
     async with aiosqlite.connect(DB_FILE) as db:
         msg_json = json.dumps(message_ids)
         await db.execute('''
-            INSERT INTO signals (symbol, type, entry, tp, sl, status, timestamp, message_ids)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (symbol, sig_type, entry, tp, sl, status, timestamp, msg_json))
+            INSERT INTO signals (symbol, type, entry, tp, sl, status, timestamp, message_ids, stars)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (symbol, sig_type, entry, tp, sl, status, timestamp, msg_json, stars))
         await db.commit()
 
 async def get_pending_signals() -> list:
@@ -61,20 +69,20 @@ async def update_signal_status(signal_id, status):
 async def get_weekly_signals_stats(start_time_iso: str):
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('''
-            SELECT status, COUNT(*) as count 
+            SELECT stars, status, COUNT(*) as count 
             FROM signals 
             WHERE timestamp > ? AND status IN ('WIN', 'LOSS', 'BREAK_EVEN')
-            GROUP BY status
+            GROUP BY stars, status
         ''', (start_time_iso,)) as cursor:
             return await cursor.fetchall()
 
 async def get_daily_coin_stats(start_time_iso: str):
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute('''
-            SELECT symbol, status, COUNT(*) as count 
+            SELECT stars, symbol, status, COUNT(*) as count 
             FROM signals 
             WHERE timestamp > ? AND status IN ('WIN', 'LOSS', 'BREAK_EVEN')
-            GROUP BY symbol, status
+            GROUP BY stars, symbol, status
         ''', (start_time_iso,)) as cursor:
             return await cursor.fetchall()
 

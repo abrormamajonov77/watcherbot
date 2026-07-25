@@ -60,30 +60,33 @@ async def analyze_symbol(symbol, mexc, tickers):
         resistance_high = prev_candles['high'].max()
         support_low    = prev_candles['low'].min()
 
-        # ── HAJM FILTRI ─────────────────────────────────────────────────
-        if current_volume < (avg_volume * VOLUME_SPIKE_X): return
+        # ── HAJM FILTRI (Eng kami 1.5x, 5 yulduz uchun 2.0x) ────────────
+        if current_volume < (avg_volume * 1.5): return
         volume_spike = current_volume / avg_volume
 
         signal_key = f"{symbol}_{timestamp}"
         if signal_key in seen_signals: return
 
         signal_type = None
+        stars = 3
         tp, sl, atr  = 0, 0, 0
 
-        # ── LONG: 4H ↑ + 1H ↑ + 15M Breakout ──────────────────────────
-        if (current_close > resistance_high
-                and trend_4h_up and trend_1h_up
-                and current_rsi < 75
-                and ema20_val > ema50_val):
+        # Mantiqiy o'zgaruvchilar (breakout/breakdown)
+        is_long_breakout = current_close > resistance_high and current_rsi < 75 and ema20_val > ema50_val
+        is_short_breakdown = current_close < support_low and current_rsi > 25 and ema20_val < ema50_val
+
+        # ── LONG SHARTLARI ──────────────────────────
+        if is_long_breakout and trend_1h_up:
             signal_type = "LONG"
+            if trend_4h_up and volume_spike >= 2.0:
+                stars = 5
             tp, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=True)
 
-        # ── SHORT: 4H ↓ + 1H ↓ + 15M Breakdown ─────────────────────────
-        elif (current_close < support_low
-                and not trend_4h_up and not trend_1h_up
-                and current_rsi > 25
-                and ema20_val < ema50_val):
+        # ── SHORT SHARTLARI ─────────────────────────
+        elif is_short_breakdown and not trend_1h_up:
             signal_type = "SHORT"
+            if not trend_4h_up and volume_spike >= 2.0:
+                stars = 5
             tp, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=False)
 
         if signal_type:
@@ -91,9 +94,12 @@ async def analyze_symbol(symbol, mexc, tickers):
 
             trend_icon = "📈" if signal_type == "LONG" else "📉"
             entry_emoji = "🚀" if signal_type == "LONG" else "🩸"
+            star_emoji = "⭐⭐⭐⭐⭐" if stars == 5 else "⭐⭐⭐"
+            star_label = "O'ta ishonchli" if stars == 5 else "O'rta daraja (Risky)"
 
             msg = (
                 f"{entry_emoji} <b>{symbol}</b> | 15M Breakout ({signal_type})\n"
+                f"Ishonchlilik: {star_emoji} <i>({star_label})</i>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"💵 <b>Kirish narxi:</b> ${current_close:.5f}\n"
                 f"🎯 <b>Take-Profit:</b> ${tp:.5f}\n"
@@ -105,14 +111,15 @@ async def analyze_symbol(symbol, mexc, tickers):
                 f"{trend_icon} <i>4H {'↑' if trend_4h_up else '↓'} | 1H {'↑' if trend_1h_up else '↓'} | 15M tasdiqlangan</i>"
             )
 
-            logger.info(f"Yangi Snayper Signali: {symbol} - {signal_type}")
+            logger.info(f"Yangi Snayper Signali: {symbol} - {signal_type} ({stars} yulduz)")
             return {
                 "symbol": symbol,
                 "type":   signal_type,
                 "entry":  current_close,
                 "tp":     tp,
                 "sl":     sl,
-                "message": msg
+                "message": msg,
+                "stars": stars
             }
 
     except Exception as e:
@@ -157,7 +164,7 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
                     await add_signal(
                         res['symbol'], res['type'], res['entry'], res['tp'], res['sl'],
-                        "PENDING", datetime.now().isoformat(), sent_messages
+                        "PENDING", datetime.now().isoformat(), sent_messages, res['stars']
                     )
 
             await asyncio.sleep(60)  # 1 minutda bir aylanadi
