@@ -1,13 +1,13 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from database import get_pending_signals, update_signal_status, get_all_users, get_weekly_signals_stats
+from database import get_pending_signals, update_signal_status, update_signal_sl, get_all_users, get_weekly_signals_stats
 
 logger = logging.getLogger(__name__)
 
 async def background_checker(mexc, telegram_notifier_func):
     """
-    Kutayotgan (PENDING) signallarni tekshirib boradi, agar TP yoki SL urilsa xabar beradi.
+    Kutayotgan (PENDING, TP1_HIT) signallarni tekshirib boradi, agar TP yoki SL urilsa xabar beradi.
     """
     logger.info("🛡 MonitorBot ishga tushdi! Ochiq signallar nazorat qilinmoqda...")
     while True:
@@ -18,26 +18,74 @@ async def background_checker(mexc, telegram_notifier_func):
                     ticker = await mexc.fetch_ticker(sig['symbol'])
                     current_price = ticker['last']
                     
-                    hit_tp = False
-                    hit_sl = False
+                    sig_id = sig['id']
+                    status = sig['status']
+                    sig_type = sig['type']
+                    entry = sig['entry']
+                    tp1 = sig['tp']
+                    tp2 = sig['tp2']
+                    sl = sig['sl']
                     
-                    if sig['type'] == 'LONG':
-                        if current_price >= sig['tp']: hit_tp = True
-                        elif current_price <= sig['sl']: hit_sl = True
-                    elif sig['type'] == 'SHORT':
-                        if current_price <= sig['tp']: hit_tp = True
-                        elif current_price >= sig['sl']: hit_sl = True
+                    msg_type = None
+                    new_status = None
+                    new_sl = None
+                    
+                    if status == 'PENDING':
+                        if sig_type == 'LONG':
+                            if current_price >= tp1:
+                                msg_type = 'TP1'
+                                new_status = 'TP1_HIT'
+                                new_sl = entry
+                            elif current_price <= sl:
+                                msg_type = 'LOSS'
+                                new_status = 'LOSS'
+                        elif sig_type == 'SHORT':
+                            if current_price <= tp1:
+                                msg_type = 'TP1'
+                                new_status = 'TP1_HIT'
+                                new_sl = entry
+                            elif current_price >= sl:
+                                msg_type = 'LOSS'
+                                new_status = 'LOSS'
+                                
+                    elif status == 'TP1_HIT':
+                        if sig_type == 'LONG':
+                            if tp2 and current_price >= tp2:
+                                msg_type = 'WIN'
+                                new_status = 'WIN'
+                            elif current_price <= sl:
+                                msg_type = 'BREAK_EVEN'
+                                new_status = 'BREAK_EVEN'
+                        elif sig_type == 'SHORT':
+                            if tp2 and current_price <= tp2:
+                                msg_type = 'WIN'
+                                new_status = 'WIN'
+                            elif current_price >= sl:
+                                msg_type = 'BREAK_EVEN'
+                                new_status = 'BREAK_EVEN'
+                                
+                    if new_status:
+                        await update_signal_status(sig_id, new_status)
+                        if new_sl:
+                            await update_signal_sl(sig_id, new_sl)
                             
-                    if hit_tp or hit_sl:
-                        new_status = 'WIN' if hit_tp else 'LOSS'
-                        await update_signal_status(sig['id'], new_status)
-                        
                         sig_time = datetime.fromisoformat(sig['timestamp']).strftime('%Y-%m-%d %H:%M')
-                        emo = "✅" if hit_tp else "❌"
-                        res_str = "Take-Profit urildi 🎯" if hit_tp else "Stop-Loss urildi 🛑"
+                        
+                        if msg_type == 'TP1':
+                            emo = "🎯"
+                            res_str = "Take-Profit 1 (TP1) urildi! 🥳\nSL kirish narxiga (Break-even) surildi."
+                        elif msg_type == 'WIN':
+                            emo = "🏆"
+                            res_str = "Take-Profit 2 (TP2) urildi! To'liq foyda 💸"
+                        elif msg_type == 'LOSS':
+                            emo = "🛑"
+                            res_str = "Stop-Loss urildi (Zarar bilan yopildi)."
+                        elif msg_type == 'BREAK_EVEN':
+                            emo = "🛡"
+                            res_str = "Zararsiz yopildi (Break-even). TP1 dan keyin narx orqaga qaytdi."
                         
                         msg = (
-                            f"{emo} <b>{sig['symbol']}</b> | {sig['type']} signali yopildi!\n"
+                            f"{emo} <b>{sig['symbol']}</b> | {sig_type} signali yangilandi!\n"
                             f"Natija: {res_str}\n\n"
                             f"🕒 Signal vaqti: {sig_time}\n"
                             f"💰 Joriy narx: ${current_price:.5f}"

@@ -20,8 +20,10 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool):
         # Risk (zarar) miqdori
         risk = current_close - sl
         
-        # Take Profit = Risk * 2 (Risk/Reward 1:2)
-        tp = current_close + (risk * 2)
+        # Take Profit 1 = Risk * 1 (Risk/Reward 1:1)
+        tp1 = current_close + risk
+        # Take Profit 2 = Risk * 2 (Risk/Reward 1:2)
+        tp2 = current_close + (risk * 2)
     else:
         # Short uchun SL = Oxirgi 15 ta shamning eng yuqori nuqtasi (Swing High) + buffer
         swing_high = df['high'].tail(15).max()
@@ -30,10 +32,12 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool):
         # Risk (zarar) miqdori
         risk = sl - current_close
         
-        # Take Profit = Risk * 2
-        tp = current_close - (risk * 2)
+        # Take Profit 1 = Risk * 1
+        tp1 = current_close - risk
+        # Take Profit 2 = Risk * 2
+        tp2 = current_close - (risk * 2)
         
-    return float(tp), float(sl), float(current_atr)
+    return float(tp1), float(tp2), float(sl), float(current_atr)
 
 def is_stablecoin(symbol: str, tickers_data: dict) -> bool:
     """

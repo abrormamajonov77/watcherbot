@@ -19,6 +19,7 @@ async def init_db():
                 type TEXT,
                 entry REAL,
                 tp REAL,
+                tp2 REAL,
                 sl REAL,
                 status TEXT,
                 timestamp TEXT,
@@ -27,11 +28,16 @@ async def init_db():
             )
         ''')
         
-        # Migratsiya: eski jadvallarga 'stars' ustunini qo'shish
+        # Migratsiya: eski jadvallarga 'stars' va 'tp2' ustunini qo'shish
         try:
             await db.execute("ALTER TABLE signals ADD COLUMN stars INTEGER DEFAULT 5")
         except Exception:
             pass # Ustun allaqachon bo'lishi mumkin
+            
+        try:
+            await db.execute("ALTER TABLE signals ADD COLUMN tp2 REAL")
+        except Exception:
+            pass
             
         await db.commit()
 
@@ -46,24 +52,29 @@ async def get_all_users() -> list:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
-async def add_signal(symbol, sig_type, entry, tp, sl, status, timestamp, message_ids, stars=5):
+async def add_signal(symbol, sig_type, entry, tp, tp2, sl, status, timestamp, message_ids, stars=5):
     async with aiosqlite.connect(DB_FILE) as db:
         msg_json = json.dumps(message_ids)
         await db.execute('''
-            INSERT INTO signals (symbol, type, entry, tp, sl, status, timestamp, message_ids, stars)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (symbol, sig_type, entry, tp, sl, status, timestamp, msg_json, stars))
+            INSERT INTO signals (symbol, type, entry, tp, tp2, sl, status, timestamp, message_ids, stars)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (symbol, sig_type, entry, tp, tp2, sl, status, timestamp, msg_json, stars))
         await db.commit()
 
 async def get_pending_signals() -> list:
     async with aiosqlite.connect(DB_FILE) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM signals WHERE status = 'PENDING'") as cursor:
+        async with db.execute("SELECT * FROM signals WHERE status IN ('PENDING', 'TP1_HIT')") as cursor:
             return await cursor.fetchall()
 
 async def update_signal_status(signal_id, status):
     async with aiosqlite.connect(DB_FILE) as db:
         await db.execute('UPDATE signals SET status = ? WHERE id = ?', (status, signal_id))
+        await db.commit()
+
+async def update_signal_sl(signal_id, sl):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute('UPDATE signals SET sl = ? WHERE id = ?', (sl, signal_id))
         await db.commit()
 
 async def get_weekly_signals_stats(start_time_iso: str):

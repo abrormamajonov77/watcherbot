@@ -3,7 +3,7 @@ import logging
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime
-from config import MIN_24H_VOLUME, VOLUME_SPIKE_X, CONCURRENT_REQUESTS
+from config import MIN_24H_VOLUME, CONCURRENT_REQUESTS
 from database import add_signal
 from utils.indicators import calculate_dynamic_tp_sl, is_stablecoin
 
@@ -12,39 +12,21 @@ logger = logging.getLogger(__name__)
 
 async def analyze_symbol(symbol, mexc, tickers):
     """
-    Koinni 15M (kirish), 1H (oraliq trend) va 4H (makro trend) bo'yicha analiz qilish.
-    Uchta taymfreym ham bir tomonga qarab tursa signal beriladi.
+    Koinni avval 15M, so'ngra 1H va 4H bo'yicha ketma-ket analiz qiladi.
+    Shuningdek Order Book (Bids/Asks) va ATR shartlari mavjud.
     """
     try:
-        # ── 4H (MAKRO TREND) ────────────────────────────────────────────
-        ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe='4h', limit=50)
-        if len(ohlcv_4h) < 20: return
-
-        df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df_4h['ema20'] = ta.ema(df_4h['close'], length=20)
-        if pd.isna(df_4h['ema20'].iloc[-2]): return
-
-        # 4H da narx EMA20 dan yuqori/pastda bo'lishi — asosiy yo'nalish
-        trend_4h_up = df_4h['close'].iloc[-2] > df_4h['ema20'].iloc[-2]
-
-        # ── 1H (ORALIQ TREND) ───────────────────────────────────────────
-        ohlcv_1h = await mexc.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-        if len(ohlcv_1h) < 25: return
-
-        df_1h = pd.DataFrame(ohlcv_1h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df_1h['ema50'] = ta.ema(df_1h['close'], length=50)
-        if pd.isna(df_1h['ema50'].iloc[-2]): return
-
-        trend_1h_up = df_1h['close'].iloc[-2] > df_1h['ema50'].iloc[-2]
-
-        # ── 15M (KIRISH NUQTASI) ────────────────────────────────────────
+        # ── 1. 15M (KIRISH NUQTASI & HAJM) ────────────────────────────────────────
         ohlcv_15m = await mexc.fetch_ohlcv(symbol, timeframe='15m', limit=100)
-        if len(ohlcv_15m) < 25: return
+        if len(ohlcv_15m) < 25: return None
 
         df = pd.DataFrame(ohlcv_15m, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['rsi'] = ta.rsi(df['close'], length=14)
         df['ema20'] = ta.ema(df['close'], length=20)
         df['ema50'] = ta.ema(df['close'], length=50)
+        
+        # ATR (sham o'lchami o'rtachasi)
+        df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
 
         closed_candle = df.iloc[-2]
         prev_candles  = df.iloc[-20:-2]  # Oxirgi 18 ta sham tarixi
@@ -55,75 +37,124 @@ async def analyze_symbol(symbol, mexc, tickers):
         ema20_val      = closed_candle['ema20']
         ema50_val      = closed_candle['ema50']
         timestamp      = closed_candle['timestamp']
+        current_atr    = closed_candle['atr']
+        
+        if pd.isna(current_atr) or current_atr == 0: return None
 
         avg_volume     = prev_candles['volume'].mean()
         resistance_high = prev_candles['high'].max()
         support_low    = prev_candles['low'].min()
+        
+        candle_size = abs(closed_candle['close'] - closed_candle['open'])
 
-        # ── HAJM FILTRI (Eng kami 1.5x, 5 yulduz uchun 2.0x) ────────────
-        if current_volume < (avg_volume * 1.5): return
+        # ── HAJM VA ATR FILTRI ────────────
+        if current_volume < (avg_volume * 1.5): return None
+        # Qalbaki yorib o'tishlardan saqlanish (shamning o'zi ATR dan katta bo'lishi kerak)
+        if candle_size < (current_atr * 0.8): return None
+        
         volume_spike = current_volume / avg_volume
 
         signal_key = f"{symbol}_{timestamp}"
-        if signal_key in seen_signals: return
+        if signal_key in seen_signals: return None
 
-        signal_type = None
+        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI cheklovi o'zgartirildi (Trend tasdig'i)
+        is_long_breakout = current_close > resistance_high and current_rsi > 55 and ema20_val > ema50_val
+        is_short_breakdown = current_close < support_low and current_rsi < 45 and ema20_val < ema50_val
+        
+        # Chop Zone himoyasi (EMA lar orasi juda yaqin bo'lsa flat bo'ladi)
+        ema_diff_percent = abs(ema20_val - ema50_val) / ema50_val
+        if ema_diff_percent < 0.001: return None # 0.1% dan kam farq - yonlama bozor
+
+        if not (is_long_breakout or is_short_breakdown): return None
+        
+        # ── 2. 1H (ORALIQ TREND) ───────────────────────────────────────────
+        ohlcv_1h = await mexc.fetch_ohlcv(symbol, timeframe='1h', limit=50)
+        if len(ohlcv_1h) < 25: return None
+        df_1h = pd.DataFrame(ohlcv_1h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df_1h['ema50'] = ta.ema(df_1h['close'], length=50)
+        if pd.isna(df_1h['ema50'].iloc[-2]): return None
+        trend_1h_up = df_1h['close'].iloc[-2] > df_1h['ema50'].iloc[-2]
+        
+        # Agar 1H trend bilan 15M mos kelmasa, bekor qilamiz
+        if is_long_breakout and not trend_1h_up: return None
+        if is_short_breakdown and trend_1h_up: return None
+
+        # ── 3. 4H (MAKRO TREND) ────────────────────────────────────────────
+        ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe='4h', limit=50)
+        if len(ohlcv_4h) < 20: return None
+        df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df_4h['ema20'] = ta.ema(df_4h['close'], length=20)
+        if pd.isna(df_4h['ema20'].iloc[-2]): return None
+        trend_4h_up = df_4h['close'].iloc[-2] > df_4h['ema20'].iloc[-2]
+
+        # ── 4. ORDER FLOW (Buyruqlar kitobi tasdig'i) ──────────────────────
+        order_book = await mexc.fetch_order_book(symbol, limit=20)
+        bids = sum([bid[1] for bid in order_book['bids']]) # Xaridorlar hajmi
+        asks = sum([ask[1] for ask in order_book['asks']]) # Sotuvchilar hajmi
+        
+        if bids == 0 or asks == 0: return None
+        
+        imbalance = bids / asks if bids > asks else asks / bids
+        
+        if is_long_breakout and asks > (bids * 3): 
+            # Katta Sell Wall bor, Breakout fakeout bo'ladi
+            logger.info(f"{symbol} LONG bekor qilindi (Sell Wall bor). Asks: {asks}, Bids: {bids}")
+            return None
+            
+        if is_short_breakdown and bids > (asks * 3):
+            # Katta Buy Wall bor
+            logger.info(f"{symbol} SHORT bekor qilindi (Buy Wall bor). Bids: {bids}, Asks: {asks}")
+            return None
+
+        # ── SIGNALLARNI SHAKLLANTIRISH ─────────────────────────
+        signal_type = "LONG" if is_long_breakout else "SHORT"
         stars = 3
-        tp, sl, atr  = 0, 0, 0
+        
+        if signal_type == "LONG" and trend_4h_up and volume_spike >= 2.0:
+            stars = 5
+        elif signal_type == "SHORT" and not trend_4h_up and volume_spike >= 2.0:
+            stars = 5
+            
+        tp1, tp2, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=(signal_type == "LONG"))
 
-        # Mantiqiy o'zgaruvchilar (breakout/breakdown)
-        is_long_breakout = current_close > resistance_high and current_rsi < 75 and ema20_val > ema50_val
-        is_short_breakdown = current_close < support_low and current_rsi > 25 and ema20_val < ema50_val
+        seen_signals[signal_key] = True
 
-        # ── LONG SHARTLARI ──────────────────────────
-        if is_long_breakout and trend_1h_up:
-            signal_type = "LONG"
-            if trend_4h_up and volume_spike >= 2.0:
-                stars = 5
-            tp, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=True)
+        trend_icon = "📈" if signal_type == "LONG" else "📉"
+        entry_emoji = "🚀" if signal_type == "LONG" else "🩸"
+        star_emoji = "⭐⭐⭐⭐⭐" if stars == 5 else "⭐⭐⭐"
+        star_label = "O'ta ishonchli" if stars == 5 else "O'rta daraja (Risky)"
 
-        # ── SHORT SHARTLARI ─────────────────────────
-        elif is_short_breakdown and not trend_1h_up:
-            signal_type = "SHORT"
-            if not trend_4h_up and volume_spike >= 2.0:
-                stars = 5
-            tp, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=False)
+        msg = (
+            f"{entry_emoji} <b>{symbol}</b> | 15M Breakout ({signal_type})\n"
+            f"Ishonchlilik: {star_emoji} <i>({star_label})</i>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💵 <b>Kirish narxi:</b> ${current_close:.5f}\n"
+            f"🎯 <b>TP1 (1:1):</b> ${tp1:.5f} (SL'ni nolga tushiring)\n"
+            f"🎯 <b>TP2 (1:2):</b> ${tp2:.5f}\n"
+            f"🛑 <b>Stop-Loss:</b> ${sl:.5f}\n\n"
+            f"📊 <b>Hajm o'sishi:</b> {volume_spike:.1f}x\n"
+            f"📉 <b>RSI (Tasdiq):</b> {current_rsi:.1f}\n"
+            f"🌊 <b>Order Flow Imbalance:</b> {imbalance:.1f}x\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{trend_icon} <i>4H {'↑' if trend_4h_up else '↓'} | 1H {'↑' if trend_1h_up else '↓'} | 15M tasdiqlangan</i>"
+        )
 
-        if signal_type:
-            seen_signals[signal_key] = True
-
-            trend_icon = "📈" if signal_type == "LONG" else "📉"
-            entry_emoji = "🚀" if signal_type == "LONG" else "🩸"
-            star_emoji = "⭐⭐⭐⭐⭐" if stars == 5 else "⭐⭐⭐"
-            star_label = "O'ta ishonchli" if stars == 5 else "O'rta daraja (Risky)"
-
-            msg = (
-                f"{entry_emoji} <b>{symbol}</b> | 15M Breakout ({signal_type})\n"
-                f"Ishonchlilik: {star_emoji} <i>({star_label})</i>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💵 <b>Kirish narxi:</b> ${current_close:.5f}\n"
-                f"🎯 <b>Take-Profit:</b> ${tp:.5f}\n"
-                f"🛑 <b>Stop-Loss:</b> ${sl:.5f}\n\n"
-                f"📊 <b>Hajm o'sishi:</b> {volume_spike:.1f}x\n"
-                f"📉 <b>RSI:</b> {current_rsi:.1f}\n"
-                f"📏 <b>ATR (Volatillik):</b> ${atr:.5f}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"{trend_icon} <i>4H {'↑' if trend_4h_up else '↓'} | 1H {'↑' if trend_1h_up else '↓'} | 15M tasdiqlangan</i>"
-            )
-
-            logger.info(f"Yangi Snayper Signali: {symbol} - {signal_type} ({stars} yulduz)")
-            return {
-                "symbol": symbol,
-                "type":   signal_type,
-                "entry":  current_close,
-                "tp":     tp,
-                "sl":     sl,
-                "message": msg,
-                "stars": stars
-            }
+        logger.info(f"Yangi Snayper Signali: {symbol} - {signal_type} ({stars} yulduz)")
+        return {
+            "symbol": symbol,
+            "type":   signal_type,
+            "entry":  current_close,
+            "tp1":    tp1,
+            "tp2":    tp2,
+            "sl":     sl,
+            "message": msg,
+            "stars": stars
+        }
 
     except Exception as e:
-        pass
+        logger.error(f"Xatolik analyze_symbol ({symbol}): {str(e)}")
+        # Exponential backoff logikasi loopda boshqariladi
+        raise e
 
     return None
 
@@ -132,7 +163,7 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
     """
     MEXC birjasidagi tangalarni skanerlash va signal topsa Telegramga yuborish.
     """
-    logger.info("🚀 SnayperBot (15M/1H/4H) ishga tushdi! MEXC skanerlanmoqda...")
+    logger.info("🚀 SnayperBot V2 (15M/1H/4H + OrderFlow) ishga tushdi! MEXC skanerlanmoqda...")
     markets_cache = None
     iteration     = 0
 
@@ -155,7 +186,19 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
 
             async def sem_task(sym):
                 async with sem:
-                    return await analyze_symbol(sym, mexc, tickers)
+                    # Exponential Backoff for rate limits
+                    retries = 3
+                    for attempt in range(retries):
+                        try:
+                            return await analyze_symbol(sym, mexc, tickers)
+                        except Exception as err:
+                            if "429" in str(err) or "Rate limit" in str(err):
+                                wait_time = 2 ** attempt
+                                logger.warning(f"Rate limit for {sym}, waiting {wait_time}s...")
+                                await asyncio.sleep(wait_time)
+                            else:
+                                return None
+                    return None
 
             results = await asyncio.gather(*[sem_task(sym) for sym in valid_symbols])
 
@@ -163,7 +206,7 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
                 if res:
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
                     await add_signal(
-                        res['symbol'], res['type'], res['entry'], res['tp'], res['sl'],
+                        res['symbol'], res['type'], res['entry'], res['tp1'], res['tp2'], res['sl'],
                         "PENDING", datetime.now().isoformat(), sent_messages, res['stars']
                     )
 

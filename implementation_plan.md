@@ -1,54 +1,41 @@
-# 📊 Signallarni Toifalarga Ajratish (5-Yulduzli va 3-Yulduzli)
+# 🚀 Sniper Botni Mukammallashtirish (V2) Rejasi
 
-Bu reja signallarni xavf (risk) darajasiga ko'ra ajratib, har xil turdagi treyderlarga qulaylik yaratishni maqsad qiladi. Shuningdek, kunlik hisobotlarni shunga qarab ikkita jadvalga bo'lamiz.
+Biz topgan xatolarni to'g'rilash bilan birga, botni yanada professional va daromadli qilish uchun quyidagi qo'shimcha takliflarni kiritdim. 
 
 ## ⚠️ User Review Required
 
-Quyidagi o'zgarishlar tasdiqlanishi kerak:
-1. **Baza (SQLite) yangilanadi**: Eski ma'lumotlar saqlab qolinadi, faqat jadvalga `stars` ustuni qo'shiladi.
-2. **Kategoriya Shartlari**:
-   - ⭐⭐⭐⭐⭐ **5-Yulduzli (O'ta ishonchli):** 4H (Macro) + 1H (Oraliq) + 15M trend bir xil yo'nalishda. Hajm (volume) o'sishi kamida **2.0 barobar**.
-   - ⭐⭐⭐ **3-Yulduzli (O'rta / Risky):** 4H trend tasdig'i shart emas. Faqat 1H va 15M trend mos kelishi kifoya. Hajm o'sishi kamida **1.5 barobar**.
-3. **Hisobot shakli**: Kunlik hisobot xuddi kechagidek chiqadi, lekin unda ikkita blok bo'ladi: biri 5 yulduzli signallar uchun, ikkinchisi 3 yulduzli signallar uchun. O'ziga xos tarzda har biri uchun `WinRate` alohida hisoblanadi.
+Iltimos, ushbu yangi takliflarni ko'rib chiqing va tasdiqlang:
+
+### 1. Mantiqiy xatolarni to'g'irlash (Agreed)
+- **RSI Paradoksi:** Yorib o'tish (Breakout) paytida RSI cheklovlari olib tashlanib, o'rniga trend kuchi tasdig'i sifatida ishlatiladi (Long uchun RSI > 55, Short uchun RSI < 45).
+- **API Yuklamasi:** Dastlab faqat 15M (Kirish) tekshiriladi. Faqat zo'r holat topilsagina 1H va 4H tasdiq uchun so'raladi. Bu API limitlarga tushish ehtimolini 90% ga kamaytiradi.
+- **Xatolarni yozish:** Bot jimjit qotib qolmasligi uchun barcha `Exception`lar log faylga yoziladi.
+
+### 2. Yana Nima Taklif Qilaman? (Yangi qo'shimchalar)
+- **🎯 Ikkita Take-Profit (TP1 va TP2):** Professional treyderlar bitta TP bilan ishlamaydi. Bot endi TP1 (xavfsiz, 1:1 risk-reward) va TP2 (maksimal foyda, 1:2) beradi. TP1 urilgach, Stop-Loss avtomatik ravishda kirish narxiga (Break-even) ko'chiriladi deb xabar qilinadi.
+- **📈 ATR (Sham kattaligi) Filtri:** Yorib o'tayotgan shamning o'lchami o'rtacha shamlar (ATR) dan kattaroq bo'lishini talab qilamiz. Bu bizni bozordagi "qalbaki yorib o'tishlardan" (fakeout) asraydi.
+- **🔄 Exponential Backoff (Qayta urinish):** Agar MEXC birjasi botni haqiqatdan ham tiqilinch sababli rad etsa, bot darhol o'tib ketmasdan, 2-3 soniya kutib qayta urinib ko'radi. Bu orqali signallarni o'tkazib yubormaymiz.
+- **🌊 Chop Zone (Yonlama bozor) himoyasi:** Bozor o'lik (flat) holatida bo'lganda, EMA20 va EMA50 bir-biriga yopishib qoladi. Shunday paytda hajm (volume) biroz oshsa ham signal olmaslik uchun EMA'lar orasidagi masofa yetarlicha keng bo'lishini shart qilamiz.
+- **📊 Order Flow (Bids/Asks) tasdig'i:** Grafikda yorib o'tish (Breakout) bo'lganidan so'ng, u qalbaki (fakeout) emasligini isbotlash uchun MEXC dan **Buyruqlar kitobi (Order Book)** ni tekshiramiz. Agar tepada judayam katta "Sell Wall" (Sotuvchilar devori) tursa signalni bekor qilamiz. Agar oqim (Order Flow) asosan xaridorlar (Bids) tomonda bo'lsagina signal beramiz. Bu WinRate'ni fantastik darajaga olib chiqadi!
 
 ## Proposed Changes
 
 ---
 
-### Database (Ma'lumotlar Bazasi)
-- Jadvalga yangi ustun qo'shish kerak: `stars` (necha yulduzli ekani).
-- Saqlash (add_signal) va o'qish (stats) funksiyalariga `stars` ma'lumotini qo'shish.
+### [MODIFY] services/sniper_engine.py
+- **Fetch ketma-ketligini o'zgartirish:** Avval `fetch_ohlcv(15m)` ishlaydi. Breakout + Volume Spike bo'lsa, keyin `fetch_ohlcv(1h)` va `fetch_ohlcv(4h)`.
+- **RSI va ATR:** RSI shartlari teskarisiga o'zgartiriladi va ATR sharti qo'shiladi (`current_candle_size > atr`).
+- **TP1 va TP2 hisoblash:** `calculate_dynamic_tp_sl` dan olingan TP qiymatini TP1 va TP2 ga ajratish.
 
-#### [MODIFY] database.py
-- `init_db()` ichiga `ALTER TABLE signals ADD COLUMN stars INTEGER DEFAULT 5` qatori xavfsiz holda (`try/except`) qo'shiladi.
-- `add_signal` va statistikani yig'uvchi so'rovlarga (`get_weekly_signals_stats`, `get_daily_coin_stats`) `stars` kiritiladi.
-
----
-
-### Engines (Skanerlar)
-- Sniper bot ichidagi mantiqni o'zgartirib, endi shartlarni 2 xil toifaga qarab baholashga o'tamiz.
-- Spot bot doim 5 yulduzli bo'ladi (chunki 1 kunlik grafik o'z-o'zidan kuchli).
-
-#### [MODIFY] services/sniper_engine.py
-- Mantiq ikkiga bo'linadi. Agar 5-yulduz shartini bajarsa, signal turi 5 bo'ladi. Agar qat'iy shart bajarilmay, faqat 3-yulduz sharti bajarsa, signal turi 3 yulduzli bo'ladi.
-- Xabar matniga ⭐⭐⭐⭐⭐ yoki ⭐⭐⭐ vizual bezaklari qo'shiladi, foydalanuvchi qanday xavfga kirayotganini aniq bilishi uchun.
-
-#### [MODIFY] services/spot_engine.py
-- Bazaga qo'shilayotgan signalda `stars=5` deb o'tkazib yuboriladi.
-
----
-
-### Monitor va Hisobot
-- Monitoring tizimi `stars` ma'lumotlarini farqlay oladi va kun oxiridagi hisobotda ularni 2 ta alohida ro'yxatga ajratib ko'rsatadi.
-- (Eslatma: Replay / Javob qaytarish orqali TP/SL urilganini bildirish funksiyasi ayni paytda normal ishlab turibdi va bunga ta'sir qilmaydi).
-
-#### [MODIFY] services/monitor_engine.py
-- `daily_reporter` barcha signallarni o'qigach, ularni `5-Yulduz` va `3-Yulduz` degan 2 xil lug'atga (dict) ajratadi.
-- AI (Gemini) ga ham shu xildagi (risky va ishonchli yopilgan) natijalar alohida kiritib beriladi.
+### [MODIFY] database.py & services/monitor_engine.py
+- `monitor_engine` kodini yangilash. Agar joriy narx TP1 ga yetsa, qisman daromad qilib SL ni nolga tushirganini xabar berishi. Agar TP2 ga yetsa to'liq foyda.
+- Bu funksionallik botni xuddi siz ko'rsatgan "TP2 urilgan (Foyda)" va "Breakeven" hisobotlariga 100% moslashtiradi.
 
 ## Verification Plan
 
+### Automated Tests
+- Hech qanday qo'shimcha komandalar kerak emas, shunchaki kod sintaksisi tahlil qilinadi.
+
 ### Manual Verification
-1. O'zgarishlar GitHub'ga yuklanadi.
-2. Render'da redeploy muvaffaqiyatli o'tgani log'da tekshiriladi (bazaga alter table muvaffaqiyatli bo'lganligi).
-3. Bot 3 va 5 yulduzli signallar yuborganida uning dizayni to'g'riligi baholanadi.
+- Renderga deploy qilingandan so'ng, loglarda "Rate limit" yoki boshqa Exception'lar chiqmayotganini kuzatamiz.
+- Bot kamida bitta 3 yulduzli yoki 5 yulduzli signal berganda, unda TP1 va TP2 chiqishini tekshiramiz.

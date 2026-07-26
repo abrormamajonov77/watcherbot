@@ -44,10 +44,11 @@ async def analyze_spot_symbol(symbol, mexc, tickers):
             avg_vol = df['volume'].tail(15).mean()
             if closed_candle['volume'] > (avg_vol * 1.5):
                 
-                tp, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=True)
+                tp1, tp2, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=True)
                 # Spot uchun ATR ni 2 marta kattalashtiramiz, chunki tebranish kattaroq
                 sl = current_close - (atr * 2)
-                tp = current_close + (atr * 4) # Risk 1:2
+                tp1 = current_close + (atr * 2) # Risk 1:1
+                tp2 = current_close + (atr * 4) # Risk 1:2
                 
                 seen_signals[signal_key] = True
                 
@@ -55,7 +56,8 @@ async def analyze_spot_symbol(symbol, mexc, tickers):
                     f"💎 <b>{symbol}</b> | SPOT Signali (1D Chart)\n"
                     f"Ishonchlilik: ⭐⭐⭐⭐⭐ <i>(Uzoq muddatli)</i>\n\n"
                     f"💵 <b>Kirish narxi:</b> ${current_close:.5f}\n"
-                    f"🎯 <b>Uzoq muddatli TP:</b> ${tp:.5f}\n"
+                    f"🎯 <b>TP1 (1:1):</b> ${tp1:.5f}\n"
+                    f"🎯 <b>TP2 (1:2):</b> ${tp2:.5f}\n"
                     f"🛑 <b>Stop-Loss:</b> ${sl:.5f}\n\n"
                     f"📈 <b>Sabab:</b> Narx 200 kunlik EMA dan yuqorida, hajm o'sishi kuzatildi.\n"
                     f"⚠️ <i>Spot signallar oylab kutilishi mumkin!</i>"
@@ -66,7 +68,8 @@ async def analyze_spot_symbol(symbol, mexc, tickers):
                     "symbol": symbol,
                     "type": "LONG", # Spot faqat long bo'ladi
                     "entry": current_close,
-                    "tp": tp,
+                    "tp1": tp1,
+                    "tp2": tp2,
                     "sl": sl,
                     "message": msg,
                     "stars": 5
