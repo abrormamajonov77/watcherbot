@@ -27,7 +27,10 @@ watcher_bot = Bot(token=WATCHER_TOKEN, default=DefaultBotProperties(parse_mode='
 dp = Dispatcher()
 
 # CCXT MEXC Instance
-mexc = ccxt.mexc({'enableRateLimit': True})
+mexc = ccxt.mexc({
+    'enableRateLimit': True,
+    'options': {'defaultType': 'spot'}
+})
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
