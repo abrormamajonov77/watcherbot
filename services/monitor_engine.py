@@ -31,6 +31,13 @@ async def background_checker(mexc, telegram_notifier_func):
                     new_sl = None
                     
                     if status == 'PENDING':
+                        sig_time_dt = datetime.fromisoformat(sig['timestamp'])
+                        # Time-decay for Scalping (2-stars) -> 3 hours
+                        if sig['stars'] == 2 and (datetime.now() - sig_time_dt) > timedelta(hours=3):
+                            await update_signal_status(sig_id, 'EXPIRED')
+                            logger.info(f"{sig['symbol']} Scalp signali eskirgani uchun (3 soat) yopildi.")
+                            continue
+                            
                         if sig_type == 'LONG':
                             if current_price >= tp1:
                                 msg_type = 'TP1'
@@ -69,7 +76,7 @@ async def background_checker(mexc, telegram_notifier_func):
                         if new_sl:
                             await update_signal_sl(sig_id, new_sl)
                             
-                        sig_time = datetime.fromisoformat(sig['timestamp']).strftime('%Y-%m-%d %H:%M')
+                        sig_time_str = datetime.fromisoformat(sig['timestamp']).strftime('%Y-%m-%d %H:%M')
                         
                         if msg_type == 'TP1':
                             emo = "🎯"
@@ -87,7 +94,7 @@ async def background_checker(mexc, telegram_notifier_func):
                         msg = (
                             f"{emo} <b>{sig['symbol']}</b> | {sig_type} signali yangilandi!\n"
                             f"Natija: {res_str}\n\n"
-                            f"🕒 Signal vaqti: {sig_time}\n"
+                            f"🕒 Signal vaqti: {sig_time_str}\n"
                             f"💰 Joriy narx: ${current_price:.5f}"
                         )
                         
@@ -106,7 +113,7 @@ async def background_checker(mexc, telegram_notifier_func):
 
 async def weekly_reporter(telegram_notifier_func):
     """
-    Har yakshanba kechasi haftalik hisobot yuboradi (5 va 3 yulduzli alohida).
+    Har yakshanba kechasi haftalik hisobot yuboradi.
     """
     while True:
         now = datetime.now()
@@ -117,7 +124,8 @@ async def weekly_reporter(telegram_notifier_func):
             
             data = {
                 5: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
-                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
+                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
+                2: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
             }
             
             for row in stats:
@@ -127,7 +135,7 @@ async def weekly_reporter(telegram_notifier_func):
                     
             report_parts = ["📊 <b>HAFTALIK SAVDO HISOBOTI</b> 📊\n━━━━━━━━━━━━━━━━━━━━━\n"]
             
-            for star in [5, 3]:
+            for star in [5, 3, 2]:
                 wins = data[star]['WIN']
                 losses = data[star]['LOSS']
                 bes = data[star]['BREAK_EVEN']
@@ -135,7 +143,7 @@ async def weekly_reporter(telegram_notifier_func):
                 
                 if total > 0:
                     win_rate = (wins / total) * 100
-                    star_icon = "⭐⭐⭐⭐⭐ (O'ta ishonchli)" if star == 5 else "⭐⭐⭐ (O'rta / Riskli)"
+                    star_icon = "⭐⭐⭐⭐⭐ (Spot)" if star == 5 else "⭐⭐⭐ (Snayper)" if star == 3 else "⭐⭐ (Scalping)"
                     report_parts.append(
                         f"🔹 <b>{star_icon}</b>\n"
                         f"Jami yopilgan: {total} ta\n"
@@ -176,7 +184,7 @@ async def generate_ai_summary(total_stats_text):
 
 async def daily_reporter(telegram_notifier_func):
     """
-    Har kuni 17:00 da kunlik kreativ hisobot yuboradi (5 va 3 yulduzli alohida).
+    Har kuni 17:00 da kunlik kreativ hisobot yuboradi.
     """
     while True:
         now = datetime.now()
@@ -187,7 +195,8 @@ async def daily_reporter(telegram_notifier_func):
             stats = await get_weekly_signals_stats(yesterday_iso)
             data = {
                 5: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
-                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
+                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
+                2: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
             }
             total_signals = 0
             
@@ -199,14 +208,13 @@ async def daily_reporter(telegram_notifier_func):
             
             if total_signals > 0:
                 coin_stats = await get_daily_coin_stats(yesterday_iso)
-                # coins_data structure: { 5: { 'BTC': {'WIN': 1...} }, 3: {...} }
-                coins_data = {5: {}, 3: {}}
+                coins_data = {5: {}, 3: {}, 2: {}}
                 
                 for row in coin_stats:
                     stars, sym, status, count = row[0], row[1], row[2], row[3]
                     if stars in coins_data:
                         if sym not in coins_data[stars]:
-                            coins_data[stars][sym] = {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
+                             coins_data[stars][sym] = {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
                         coins_data[stars][sym][status] += count
                 
                 report_parts = [
@@ -216,7 +224,7 @@ async def daily_reporter(telegram_notifier_func):
                 
                 stats_for_ai = ""
                 
-                for star in [5, 3]:
+                for star in [5, 3, 2]:
                     wins = data[star]['WIN']
                     losses = data[star]['LOSS']
                     bes = data[star]['BREAK_EVEN']
@@ -224,7 +232,7 @@ async def daily_reporter(telegram_notifier_func):
                     
                     if total > 0:
                         win_rate = (wins / total) * 100
-                        star_icon = "⭐⭐⭐⭐⭐ (O'ta ishonchli)" if star == 5 else "⭐⭐⭐ (O'rta / Riskli)"
+                        star_icon = "⭐⭐⭐⭐⭐ (Spot)" if star == 5 else "⭐⭐⭐ (Snayper)" if star == 3 else "⭐⭐ (Scalping)"
                         
                         coins_str_list = []
                         for sym, cdata in coins_data[star].items():

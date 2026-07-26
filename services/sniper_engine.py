@@ -75,10 +75,6 @@ async def analyze_symbol(symbol, mexc, tickers):
         if pd.isna(df_1h['ema50'].iloc[-2]): return None
         trend_1h_up = df_1h['close'].iloc[-2] > df_1h['ema50'].iloc[-2]
         
-        # Agar 1H trend bilan 15M mos kelmasa, bekor qilamiz
-        if is_long_breakout and not trend_1h_up: return None
-        if is_short_breakdown and trend_1h_up: return None
-
         # ── 3. 4H (MAKRO TREND) ────────────────────────────────────────────
         ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe='4h', limit=50)
         if len(ohlcv_4h) < 20: return None
@@ -108,29 +104,40 @@ async def analyze_symbol(symbol, mexc, tickers):
 
         # ── SIGNALLARNI SHAKLLANTIRISH ─────────────────────────
         signal_type = "LONG" if is_long_breakout else "SHORT"
-        stars = 3
         
-        if signal_type == "LONG" and trend_4h_up and volume_spike >= 2.0:
-            stars = 5
-        elif signal_type == "SHORT" and not trend_4h_up and volume_spike >= 2.0:
-            stars = 5
+        is_macro_aligned = False
+        if signal_type == "LONG" and trend_1h_up and trend_4h_up:
+            is_macro_aligned = True
+        elif signal_type == "SHORT" and not trend_1h_up and not trend_4h_up:
+            is_macro_aligned = True
             
-        tp1, tp2, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=(signal_type == "LONG"))
+        stars = 2 # Default to 2-star (Scalping) if macro trend is against us
+        if is_macro_aligned:
+            stars = 3
+            if volume_spike >= 2.0:
+                stars = 5
+                
+        is_scalp = (stars == 2)
+            
+        tp1, tp2, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=(signal_type == "LONG"), is_scalp=is_scalp)
 
         seen_signals[signal_key] = True
 
         trend_icon = "📈" if signal_type == "LONG" else "📉"
         entry_emoji = "🚀" if signal_type == "LONG" else "🩸"
-        star_emoji = "⭐⭐⭐⭐⭐" if stars == 5 else "⭐⭐⭐"
-        star_label = "O'ta ishonchli" if stars == 5 else "O'rta daraja (Risky)"
+        star_emoji = "⭐⭐⭐⭐⭐" if stars == 5 else "⭐⭐⭐" if stars == 3 else "⭐⭐"
+        star_label = "O'ta ishonchli (Spot)" if stars == 5 else "Trendga mos (Snayper)" if stars == 3 else "Trendga qarshi (Scalping)"
+        
+        scalp_warning = "🚨 <b>DIQQAT:</b> Katta trend teskari! Bu qisqa muddatli Skalping (Risk 100% o'zingizda!)\n━━━━━━━━━━━━━━━━━━━━━\n" if is_scalp else ""
 
         msg = (
             f"{entry_emoji} <b>{symbol}</b> | 15M Breakout ({signal_type})\n"
             f"Ishonchlilik: {star_emoji} <i>({star_label})</i>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{scalp_warning}"
             f"💵 <b>Kirish narxi:</b> ${current_close:.5f}\n"
-            f"🎯 <b>TP1 (1:1):</b> ${tp1:.5f} (SL'ni nolga tushiring)\n"
-            f"🎯 <b>TP2 (1:2):</b> ${tp2:.5f}\n"
+            f"🎯 <b>TP1 (Scalp/Target 1):</b> ${tp1:.5f} (SL'ni nolga tushiring)\n"
+            f"🎯 <b>TP2 (Max Profit):</b> ${tp2:.5f}\n"
             f"🛑 <b>Stop-Loss:</b> ${sl:.5f}\n\n"
             f"📊 <b>Hajm o'sishi:</b> {volume_spike:.1f}x\n"
             f"📉 <b>RSI (Tasdiq):</b> {current_rsi:.1f}\n"

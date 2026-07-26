@@ -1,6 +1,6 @@
 import pandas_ta as ta
 
-def calculate_dynamic_tp_sl(df, current_close, is_long: bool):
+def calculate_dynamic_tp_sl(df, current_close, is_long: bool, is_scalp: bool = False):
     """
     Kiritilgan DataFrame asosida dinamik (ATR va Swings) orqali Stop-Loss va Take-Profit hisoblaydi.
     df - pandas DataFrame (koinning oxirgi 100 ta shamlari)
@@ -9,6 +9,19 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool):
     atr = ta.atr(df['high'], df['low'], df['close'], length=14)
     current_atr = atr.iloc[-2] if not atr.isna().iloc[-2] else (df['close'].iloc[-2] * 0.01) # fallback 1%
     
+    if is_scalp:
+        # Skalping uchun torroq va tezroq risk menejmenti
+        risk = current_atr * 0.8
+        if is_long:
+            sl = current_close - risk
+            tp1 = current_close + risk
+            tp2 = current_close + (risk * 1.5)
+        else:
+            sl = current_close + risk
+            tp1 = current_close - risk
+            tp2 = current_close - (risk * 1.5)
+        return float(tp1), float(tp2), float(sl), float(current_atr)
+
     # Kichik xavfsizlik (soya - wick) masofasi
     buffer = current_atr * 0.5 
     
