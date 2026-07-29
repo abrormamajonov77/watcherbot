@@ -209,13 +209,18 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
 
             results = await asyncio.gather(*[sem_task(sym) for sym in valid_symbols])
 
+            valid_res_count = 0
             for res in results:
                 if res:
+                    valid_res_count += 1
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
                     await add_signal(
                         res['symbol'], res['type'], res['entry'], res['tp1'], res['tp2'], res['sl'],
                         "PENDING", datetime.now().isoformat(), sent_messages, res['stars']
                     )
+            
+            # Har bir to'liq aylanma tugagach, ishlayotganini bildirish uchun log qoldiramiz
+            logger.info(f"⚡ Snayper iteratsiyasi tugadi: {len(valid_symbols)} ta coin tekshirildi, {valid_res_count} ta signal topildi.")
 
             await asyncio.sleep(60)  # 1 minutda bir aylanadi
 

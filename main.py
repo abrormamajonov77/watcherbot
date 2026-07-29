@@ -32,6 +32,13 @@ mexc = ccxt.mexc({
     'options': {'defaultType': 'spot'}
 })
 
+# Katta muammo yechimi: CCXT kutubxonasi 'spot' deb ko'rsatilsa ham orqa fonda 'fetch_swap_markets' orqali 
+# fyuchears marketlarni qidiradi va MEXC dagi blokirovka/yangilanish tufayli Crash bo'ladi (bot jim bo'lib qoladi).
+# Buni chetlab o'tish uchun shu funksiyani bo'sh (empty) qilib qo'yamiz.
+async def mock_fetch_swap_markets(*args, **kwargs):
+    return []
+mexc.fetch_swap_markets = mock_fetch_swap_markets
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id

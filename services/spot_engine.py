@@ -108,18 +108,22 @@ async def spot_scanner_loop(mexc, telegram_notifier_func):
                 async with sem:
                     return await analyze_spot_symbol(sym, mexc, tickers)
 
-            tasks = [sem_task(sym) for sym in valid_symbols]
-            results = await asyncio.gather(*tasks)
-            
+            results = await asyncio.gather(*[sem_task(sym) for sym in valid_symbols])
+
+            valid_res_count = 0
             for res in results:
                 if res:
+                    valid_res_count += 1
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
                     await add_signal(
-                        res['symbol'], res['type'], res['entry'], res['tp'], res['sl'], 
-                        "PENDING", datetime.now().isoformat(), sent_messages, res['stars']
+                        res['symbol'], res['type'], res['entry'], res['tp1'], res['tp2'], res['sl'],
+                        "PENDING", datetime.now().isoformat(), sent_messages, stars=5
                     )
+            
+            logger.info(f"🔭 Spot iteratsiyasi tugadi: {len(valid_symbols)} ta coin tekshirildi, {valid_res_count} ta signal topildi.")
 
-            await asyncio.sleep(3600) # Spot bot har 1 soatda 1 marta tekshiradi
+            # Spot kunlik bo'lgani uchun 5-10 minut kutamiz
+            await asyncio.sleep(600)
             
         except Exception as e:
             logger.error(f"Spot kritik xatoligi: {e}")
