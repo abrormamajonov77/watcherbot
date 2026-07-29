@@ -17,7 +17,7 @@ TARGET_CHANNEL = os.getenv('TARGET_CHANNEL', '@watcherguruuz')
 RSS_URL = os.getenv('RSS_URL', 'https://watcher.guru/news/feed')
 
 # --- TRADING SETTINGS ---
-MIN_24H_VOLUME = 1_000_000
+MIN_24H_VOLUME = 300_000 # Oldin 1_000_000 edi, endi 300k (ko'proq signallar uchun)
 VOLUME_SPIKE_X = 2.5
 CONCURRENT_REQUESTS = 5
 

@@ -99,8 +99,8 @@ async def spot_scanner_loop(mexc, telegram_notifier_func):
                 if not s.endswith('/USDT'): continue
                 if is_stablecoin(s, tickers): continue
                 if not markets_cache.get(s, {}).get('spot'): continue
-                # Spot uchun 24h hajm kamida 5 million bo'lishi yaxshi (ishonchli loyihalar)
-                if t.get('quoteVolume', 0) < (MIN_24H_VOLUME * 5): continue
+                # Spot uchun 24h hajm kamida 4.5 million bo'lishi yaxshi (ishonchli loyihalar). 300k * 15 = 4.5M
+                if t.get('quoteVolume', 0) < (MIN_24H_VOLUME * 15): continue
                 
                 valid_symbols.append(s)
 
