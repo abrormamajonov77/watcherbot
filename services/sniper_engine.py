@@ -48,14 +48,14 @@ async def analyze_symbol(symbol, mexc, tickers):
         candle_size = abs(closed_candle['close'] - closed_candle['open'])
 
         # ── HAJM VA ATR FILTRI ────────────
-        if current_volume < (avg_volume * 1.5): return None
+        if current_volume < (avg_volume * 1.5): return (None, "volume_too_low")
         # Qalbaki yorib o'tishlardan saqlanish (shamning o'zi ATR dan katta bo'lishi kerak)
-        if candle_size < (current_atr * 0.8): return None
+        if candle_size < (current_atr * 0.8): return (None, "candle_too_small")
         
         volume_spike = current_volume / avg_volume
 
         signal_key = f"{symbol}_{timestamp}"
-        if signal_key in seen_signals: return None
+        if signal_key in seen_signals: return (None, "already_seen")
 
         # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI cheklovi o'zgartirildi (Trend tasdig'i)
         is_long_breakout = current_close > resistance_high and current_rsi > 55 and ema20_val > ema50_val
@@ -63,24 +63,24 @@ async def analyze_symbol(symbol, mexc, tickers):
         
         # Chop Zone himoyasi (EMA lar orasi juda yaqin bo'lsa flat bo'ladi)
         ema_diff_percent = abs(ema20_val - ema50_val) / ema50_val
-        if ema_diff_percent < 0.001: return None # 0.1% dan kam farq - yonlama bozor
+        if ema_diff_percent < 0.001: return (None, "ema_chop_zone")
 
-        if not (is_long_breakout or is_short_breakdown): return None
+        if not (is_long_breakout or is_short_breakdown): return (None, "no_breakout")
         
         # ── 2. 1H (ORALIQ TREND) ───────────────────────────────────────────
         ohlcv_1h = await mexc.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-        if len(ohlcv_1h) < 25: return None
+        if len(ohlcv_1h) < 25: return (None, "1h_data_missing")
         df_1h = pd.DataFrame(ohlcv_1h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df_1h['ema50'] = ta.ema(df_1h['close'], length=50)
-        if pd.isna(df_1h['ema50'].iloc[-2]): return None
+        if pd.isna(df_1h['ema50'].iloc[-2]): return (None, "1h_ema_missing")
         trend_1h_up = df_1h['close'].iloc[-2] > df_1h['ema50'].iloc[-2]
         
         # ── 3. 4H (MAKRO TREND) ────────────────────────────────────────────
         ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe='4h', limit=50)
-        if len(ohlcv_4h) < 20: return None
+        if len(ohlcv_4h) < 20: return (None, "4h_data_missing")
         df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df_4h['ema20'] = ta.ema(df_4h['close'], length=20)
-        if pd.isna(df_4h['ema20'].iloc[-2]): return None
+        if pd.isna(df_4h['ema20'].iloc[-2]): return (None, "4h_ema_missing")
         trend_4h_up = df_4h['close'].iloc[-2] > df_4h['ema20'].iloc[-2]
 
         # ── 4. ORDER FLOW (Buyruqlar kitobi tasdig'i) ──────────────────────
@@ -88,19 +88,19 @@ async def analyze_symbol(symbol, mexc, tickers):
         bids = sum([bid[1] for bid in order_book['bids']]) # Xaridorlar hajmi
         asks = sum([ask[1] for ask in order_book['asks']]) # Sotuvchilar hajmi
         
-        if bids == 0 or asks == 0: return None
+        if bids == 0 or asks == 0: return (None, "empty_order_book")
         
         imbalance = bids / asks if bids > asks else asks / bids
         
         if is_long_breakout and asks > (bids * 3): 
             # Katta Sell Wall bor, Breakout fakeout bo'ladi
             logger.info(f"{symbol} LONG bekor qilindi (Sell Wall bor). Asks: {asks}, Bids: {bids}")
-            return None
+            return (None, "sell_wall_blocked")
             
         if is_short_breakdown and bids > (asks * 3):
             # Katta Buy Wall bor
             logger.info(f"{symbol} SHORT bekor qilindi (Buy Wall bor). Bids: {bids}, Asks: {asks}")
-            return None
+            return (None, "buy_wall_blocked")
 
         # ── SIGNALLARNI SHAKLLANTIRISH ─────────────────────────
         signal_type = "LONG" if is_long_breakout else "SHORT"
@@ -147,7 +147,7 @@ async def analyze_symbol(symbol, mexc, tickers):
         )
 
         logger.info(f"Yangi Snayper Signali: {symbol} - {signal_type} ({stars} yulduz)")
-        return {
+        return ({
             "symbol": symbol,
             "type":   signal_type,
             "entry":  current_close,
@@ -156,14 +156,14 @@ async def analyze_symbol(symbol, mexc, tickers):
             "sl":     sl,
             "message": msg,
             "stars": stars
-        }
+        }, "success")
 
     except Exception as e:
         logger.error(f"Xatolik analyze_symbol ({symbol}): {str(e)}")
         # Exponential backoff logikasi loopda boshqariladi
         raise e
 
-    return None
+    return (None, "unknown_error")
 
 
 async def sniper_scanner_loop(mexc, telegram_notifier_func):
@@ -204,13 +204,20 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
                                 logger.warning(f"Rate limit for {sym}, waiting {wait_time}s...")
                                 await asyncio.sleep(wait_time)
                             else:
-                                return None
-                    return None
+                                return (None, "exception")
+                    return (None, "rate_limit_exceeded")
 
             results = await asyncio.gather(*[sem_task(sym) for sym in valid_symbols])
 
             valid_res_count = 0
-            for res in results:
+            reason_counts = {}
+            for res_tuple in results:
+                if not res_tuple: continue
+                res, reason = res_tuple
+                
+                if reason != "success":
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                    
                 if res:
                     valid_res_count += 1
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
@@ -220,7 +227,7 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
                     )
             
             # Har bir to'liq aylanma tugagach, ishlayotganini bildirish uchun log qoldiramiz
-            logger.info(f"⚡ Snayper iteratsiyasi tugadi: {len(valid_symbols)} ta coin tekshirildi, {valid_res_count} ta signal topildi.")
+            logger.info(f"⚡ Snayper iteratsiyasi: {len(valid_symbols)} coin, {valid_res_count} signal. Sabablar: {reason_counts}")
 
             await asyncio.sleep(60)  # 1 minutda bir aylanadi
 
