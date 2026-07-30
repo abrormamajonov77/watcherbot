@@ -42,45 +42,48 @@ async def analyze_symbol(symbol, mexc, tickers):
         if pd.isna(current_atr) or current_atr == 0: return None
 
         avg_volume     = prev_candles['volume'].mean()
-        resistance_high = prev_candles['high'].max()
-        support_low    = prev_candles['low'].min()
+        # Oldin 18 ta shamning 'high' laridan baland bo'lishi kerak edi (juda qattiq shart).
+        # Endi faqat oldingi 18 ta shamning 'close' laridan (yopilish narxlaridan) baland bo'lsa yetarli.
+        resistance_high = prev_candles['close'].max()
+        support_low    = prev_candles['close'].min()
         
         candle_size = abs(closed_candle['close'] - closed_candle['open'])
 
         # ── HAJM VA ATR FILTRI ────────────
-        if current_volume < (avg_volume * 1.5): return (None, "volume_too_low")
-        # Qalbaki yorib o'tishlardan saqlanish (shamning o'zi ATR dan katta bo'lishi kerak)
-        if candle_size < (current_atr * 0.8): return (None, "candle_too_small")
+        # Hajm o'rtachadan atigi 20% baland bo'lsa yetarli (oldin 50% edi)
+        if current_volume < (avg_volume * 1.2): return None
+        # Sham tanasi ATR ning 60% ini tashkil qilsa yetarli (oldin 80% edi)
+        if candle_size < (current_atr * 0.6): return None
         
         volume_spike = current_volume / avg_volume
 
         signal_key = f"{symbol}_{timestamp}"
-        if signal_key in seen_signals: return (None, "already_seen")
+        if signal_key in seen_signals: return None
 
-        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI cheklovi o'zgartirildi (Trend tasdig'i)
+        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI va EMA
         is_long_breakout = current_close > resistance_high and current_rsi > 55 and ema20_val > ema50_val
         is_short_breakdown = current_close < support_low and current_rsi < 45 and ema20_val < ema50_val
         
-        # Chop Zone himoyasi (EMA lar orasi juda yaqin bo'lsa flat bo'ladi)
+        # Chop Zone himoyasi
         ema_diff_percent = abs(ema20_val - ema50_val) / ema50_val
-        if ema_diff_percent < 0.001: return (None, "ema_chop_zone")
+        if ema_diff_percent < 0.0005: return None # 0.05% dan kam farq - yonlama bozor (oldin 0.1% edi)
 
-        if not (is_long_breakout or is_short_breakdown): return (None, "no_breakout")
+        if not (is_long_breakout or is_short_breakdown): return None
         
         # ── 2. 1H (ORALIQ TREND) ───────────────────────────────────────────
         ohlcv_1h = await mexc.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-        if len(ohlcv_1h) < 25: return (None, "1h_data_missing")
+        if len(ohlcv_1h) < 25: return None
         df_1h = pd.DataFrame(ohlcv_1h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df_1h['ema50'] = ta.ema(df_1h['close'], length=50)
-        if pd.isna(df_1h['ema50'].iloc[-2]): return (None, "1h_ema_missing")
+        if pd.isna(df_1h['ema50'].iloc[-2]): return None
         trend_1h_up = df_1h['close'].iloc[-2] > df_1h['ema50'].iloc[-2]
         
         # ── 3. 4H (MAKRO TREND) ────────────────────────────────────────────
         ohlcv_4h = await mexc.fetch_ohlcv(symbol, timeframe='4h', limit=50)
-        if len(ohlcv_4h) < 20: return (None, "4h_data_missing")
+        if len(ohlcv_4h) < 20: return None
         df_4h = pd.DataFrame(ohlcv_4h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df_4h['ema20'] = ta.ema(df_4h['close'], length=20)
-        if pd.isna(df_4h['ema20'].iloc[-2]): return (None, "4h_ema_missing")
+        if pd.isna(df_4h['ema20'].iloc[-2]): return None
         trend_4h_up = df_4h['close'].iloc[-2] > df_4h['ema20'].iloc[-2]
 
         # ── 4. ORDER FLOW (Buyruqlar kitobi tasdig'i) ──────────────────────
@@ -88,19 +91,19 @@ async def analyze_symbol(symbol, mexc, tickers):
         bids = sum([bid[1] for bid in order_book['bids']]) # Xaridorlar hajmi
         asks = sum([ask[1] for ask in order_book['asks']]) # Sotuvchilar hajmi
         
-        if bids == 0 or asks == 0: return (None, "empty_order_book")
+        if bids == 0 or asks == 0: return None
         
         imbalance = bids / asks if bids > asks else asks / bids
         
-        if is_long_breakout and asks > (bids * 3): 
+        if is_long_breakout and asks > (bids * 5): 
             # Katta Sell Wall bor, Breakout fakeout bo'ladi
             logger.info(f"{symbol} LONG bekor qilindi (Sell Wall bor). Asks: {asks}, Bids: {bids}")
-            return (None, "sell_wall_blocked")
+            return None
             
-        if is_short_breakdown and bids > (asks * 3):
+        if is_short_breakdown and bids > (asks * 5):
             # Katta Buy Wall bor
             logger.info(f"{symbol} SHORT bekor qilindi (Buy Wall bor). Bids: {bids}, Asks: {asks}")
-            return (None, "buy_wall_blocked")
+            return None
 
         # ── SIGNALLARNI SHAKLLANTIRISH ─────────────────────────
         signal_type = "LONG" if is_long_breakout else "SHORT"
@@ -147,7 +150,7 @@ async def analyze_symbol(symbol, mexc, tickers):
         )
 
         logger.info(f"Yangi Snayper Signali: {symbol} - {signal_type} ({stars} yulduz)")
-        return ({
+        return {
             "symbol": symbol,
             "type":   signal_type,
             "entry":  current_close,
@@ -156,14 +159,14 @@ async def analyze_symbol(symbol, mexc, tickers):
             "sl":     sl,
             "message": msg,
             "stars": stars
-        }, "success")
+        }
 
     except Exception as e:
         logger.error(f"Xatolik analyze_symbol ({symbol}): {str(e)}")
         # Exponential backoff logikasi loopda boshqariladi
         raise e
 
-    return (None, "unknown_error")
+    return None
 
 
 async def sniper_scanner_loop(mexc, telegram_notifier_func):
@@ -204,20 +207,13 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
                                 logger.warning(f"Rate limit for {sym}, waiting {wait_time}s...")
                                 await asyncio.sleep(wait_time)
                             else:
-                                return (None, "exception")
-                    return (None, "rate_limit_exceeded")
+                                return None
+                    return None
 
             results = await asyncio.gather(*[sem_task(sym) for sym in valid_symbols])
 
             valid_res_count = 0
-            reason_counts = {}
-            for res_tuple in results:
-                if not res_tuple: continue
-                res, reason = res_tuple
-                
-                if reason != "success":
-                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
-                    
+            for res in results:
                 if res:
                     valid_res_count += 1
                     sent_messages = await telegram_notifier_func(res['message'], res['symbol'])
@@ -227,7 +223,7 @@ async def sniper_scanner_loop(mexc, telegram_notifier_func):
                     )
             
             # Har bir to'liq aylanma tugagach, ishlayotganini bildirish uchun log qoldiramiz
-            logger.info(f"⚡ Snayper iteratsiyasi: {len(valid_symbols)} coin, {valid_res_count} signal. Sabablar: {reason_counts}")
+            logger.info(f"⚡ Snayper iteratsiyasi tugadi: {len(valid_symbols)} ta coin tekshirildi, {valid_res_count} ta signal topildi.")
 
             await asyncio.sleep(60)  # 1 minutda bir aylanadi
 
