@@ -39,10 +39,10 @@ async def analyze_spot_symbol(symbol, mexc, tickers):
         
         # Spot LONG shartlari: Narx 200 Kunlik MA dan balandda (Yoki yaqinda kesib o'tgan), RSI normal
         # EMA50 > EMA200 (Golden Cross tasdig'i)
-        if current_close > ema200 and ema50 > ema200 and 40 < current_rsi < 65:
+        if current_close > ema200 and ema50 > ema200 and 35 < current_rsi < 75:
             # Qo'shimcha hajm (volume) tekshiruvi: oxirgi kun hajmi o'rtachadan baland bo'lsa
             avg_vol = df['volume'].tail(15).mean()
-            if closed_candle['volume'] > (avg_vol * 1.5):
+            if closed_candle['volume'] > (avg_vol * 1.1):
                 
                 tp1, tp2, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=True)
                 # Spot uchun ATR ni 2 marta kattalashtiramiz, chunki tebranish kattaroq

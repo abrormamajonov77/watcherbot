@@ -50,23 +50,23 @@ async def analyze_symbol(symbol, mexc, tickers):
         candle_size = abs(closed_candle['close'] - closed_candle['open'])
 
         # ── HAJM VA ATR FILTRI ────────────
-        # Hajm o'rtachadan atigi 20% baland bo'lsa yetarli (oldin 50% edi)
-        if current_volume < (avg_volume * 1.2): return None
-        # Sham tanasi ATR ning 60% ini tashkil qilsa yetarli (oldin 80% edi)
-        if candle_size < (current_atr * 0.6): return None
+        # Hajm o'rtachadan atigi teng yoki baland bo'lsa yetarli
+        if current_volume < avg_volume: return None
+        # Sham tanasi ATR ning 30% ini tashkil qilsa yetarli
+        if candle_size < (current_atr * 0.3): return None
         
         volume_spike = current_volume / avg_volume
 
         signal_key = f"{symbol}_{timestamp}"
         if signal_key in seen_signals: return None
 
-        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI va EMA
-        is_long_breakout = current_close > resistance_high and current_rsi > 55 and ema20_val > ema50_val
-        is_short_breakdown = current_close < support_low and current_rsi < 45 and ema20_val < ema50_val
+        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI va EMA (shartlar yumshatildi)
+        is_long_breakout = current_close > resistance_high and current_rsi > 52 and ema20_val > ema50_val
+        is_short_breakdown = current_close < support_low and current_rsi < 48 and ema20_val < ema50_val
         
         # Chop Zone himoyasi
         ema_diff_percent = abs(ema20_val - ema50_val) / ema50_val
-        if ema_diff_percent < 0.0005: return None # 0.05% dan kam farq - yonlama bozor (oldin 0.1% edi)
+        if ema_diff_percent < 0.0002: return None # 0.02% dan kam farq - yonlama bozor (juda yumshatildi)
 
         if not (is_long_breakout or is_short_breakdown): return None
         
@@ -95,12 +95,12 @@ async def analyze_symbol(symbol, mexc, tickers):
         
         imbalance = bids / asks if bids > asks else asks / bids
         
-        if is_long_breakout and asks > (bids * 5): 
+        if is_long_breakout and asks > (bids * 8): 
             # Katta Sell Wall bor, Breakout fakeout bo'ladi
             logger.info(f"{symbol} LONG bekor qilindi (Sell Wall bor). Asks: {asks}, Bids: {bids}")
             return None
             
-        if is_short_breakdown and bids > (asks * 5):
+        if is_short_breakdown and bids > (asks * 8):
             # Katta Buy Wall bor
             logger.info(f"{symbol} SHORT bekor qilindi (Buy Wall bor). Bids: {bids}, Asks: {asks}")
             return None
