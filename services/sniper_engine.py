@@ -71,8 +71,8 @@ async def analyze_symbol(symbol, mexc, tickers):
         if not (is_long_breakout or is_short_breakdown): return None
         
         # ── 2. 1H (ORALIQ TREND) ───────────────────────────────────────────
-        ohlcv_1h = await mexc.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-        if len(ohlcv_1h) < 25: return None
+        ohlcv_1h = await mexc.fetch_ohlcv(symbol, timeframe='1h', limit=100)
+        if len(ohlcv_1h) < 60: return None
         df_1h = pd.DataFrame(ohlcv_1h, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df_1h['ema50'] = ta.ema(df_1h['close'], length=50)
         if pd.isna(df_1h['ema50'].iloc[-2]): return None
