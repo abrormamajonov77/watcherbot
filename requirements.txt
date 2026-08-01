@@ -7,4 +7,5 @@ flask
 google-generativeai
 feedparser
 aiohttp
-aiosqlite
+motor
+certifi

@@ -1,112 +1,88 @@
-import aiosqlite
+import os
+import motor.motor_asyncio
+import certifi
 import json
+from bson.objectid import ObjectId
 
-DB_FILE = "bot_data.db"
+MONGO_URI = os.getenv('MONGO_URI')
+if not MONGO_URI:
+    print("XATOLIK: MONGO_URI kiritilmagan! .env fayliga MONGO_URI kiriting.")
+    exit(1)
+
+client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI, tlsCAFile=certifi.where(), tlsAllowInvalidCertificates=True)
+db = client['sniper_bot_db']
+users_coll = db['users']
+signals_coll = db['signals']
+kv_coll = db['kv_store']
 
 async def init_db():
-    async with aiosqlite.connect(DB_FILE) as db:
-        # Create users table
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY
-            )
-        ''')
-        # Create signals table
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS signals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT,
-                type TEXT,
-                entry REAL,
-                tp REAL,
-                tp2 REAL,
-                sl REAL,
-                status TEXT,
-                timestamp TEXT,
-                message_ids TEXT,
-                stars INTEGER DEFAULT 5
-            )
-        ''')
-        
-        # Migratsiya: eski jadvallarga 'stars' va 'tp2' ustunini qo'shish
-        try:
-            await db.execute("ALTER TABLE signals ADD COLUMN stars INTEGER DEFAULT 5")
-        except Exception:
-            pass # Ustun allaqachon bo'lishi mumkin
-            
-        try:
-            await db.execute("ALTER TABLE signals ADD COLUMN tp2 REAL")
-        except Exception:
-            pass
-            
-        await db.commit()
+    pass
 
 async def add_user(user_id: int):
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (user_id,))
-        await db.commit()
+    await users_coll.update_one({'user_id': user_id}, {'$set': {'user_id': user_id}}, upsert=True)
 
 async def get_all_users() -> list:
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('SELECT user_id FROM users') as cursor:
-            rows = await cursor.fetchall()
-            return [row[0] for row in rows]
+    cursor = users_coll.find({})
+    users = []
+    async for doc in cursor:
+        users.append(doc['user_id'])
+    return users
 
 async def add_signal(symbol, sig_type, entry, tp, tp2, sl, status, timestamp, message_ids, stars=5):
-    async with aiosqlite.connect(DB_FILE) as db:
-        msg_json = json.dumps(message_ids)
-        await db.execute('''
-            INSERT INTO signals (symbol, type, entry, tp, tp2, sl, status, timestamp, message_ids, stars)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (symbol, sig_type, entry, tp, tp2, sl, status, timestamp, msg_json, stars))
-        await db.commit()
+    msg_str = json.dumps(message_ids) if isinstance(message_ids, dict) else message_ids
+    doc = {
+        "symbol": symbol,
+        "type": sig_type,
+        "entry": entry,
+        "tp": tp,
+        "tp2": tp2,
+        "sl": sl,
+        "status": status,
+        "timestamp": timestamp,
+        "message_ids": msg_str,
+        "stars": stars
+    }
+    await signals_coll.insert_one(doc)
 
 async def get_pending_signals() -> list:
-    async with aiosqlite.connect(DB_FILE) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM signals WHERE status IN ('PENDING', 'TP1_HIT')") as cursor:
-            return await cursor.fetchall()
+    cursor = signals_coll.find({"status": {"$in": ["PENDING", "TP1_HIT"]}})
+    results = []
+    async for doc in cursor:
+        doc['id'] = str(doc['_id'])
+        results.append(doc)
+    return results
 
 async def update_signal_status(signal_id, status):
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('UPDATE signals SET status = ? WHERE id = ?', (status, signal_id))
-        await db.commit()
+    await signals_coll.update_one({"_id": ObjectId(signal_id)}, {"$set": {"status": status}})
 
 async def update_signal_sl(signal_id, sl):
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('UPDATE signals SET sl = ? WHERE id = ?', (sl, signal_id))
-        await db.commit()
+    await signals_coll.update_one({"_id": ObjectId(signal_id)}, {"$set": {"sl": sl}})
 
 async def get_weekly_signals_stats(start_time_iso: str):
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('''
-            SELECT stars, status, COUNT(*) as count 
-            FROM signals 
-            WHERE timestamp > ? AND status IN ('WIN', 'LOSS', 'BREAK_EVEN')
-            GROUP BY stars, status
-        ''', (start_time_iso,)) as cursor:
-            return await cursor.fetchall()
+    pipeline = [
+        {"$match": {"timestamp": {"$gt": start_time_iso}, "status": {"$in": ['WIN', 'LOSS', 'BREAK_EVEN']}}},
+        {"$group": {"_id": {"stars": "$stars", "status": "$status"}, "count": {"$sum": 1}}}
+    ]
+    cursor = signals_coll.aggregate(pipeline)
+    results = []
+    async for doc in cursor:
+        results.append((doc['_id'].get('stars', 5), doc['_id'].get('status'), doc['count']))
+    return results
 
 async def get_daily_coin_stats(start_time_iso: str):
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute('''
-            SELECT stars, symbol, status, COUNT(*) as count 
-            FROM signals 
-            WHERE timestamp > ? AND status IN ('WIN', 'LOSS', 'BREAK_EVEN')
-            GROUP BY stars, symbol, status
-        ''', (start_time_iso,)) as cursor:
-            return await cursor.fetchall()
+    pipeline = [
+        {"$match": {"timestamp": {"$gt": start_time_iso}, "status": {"$in": ['WIN', 'LOSS', 'BREAK_EVEN']}}},
+        {"$group": {"_id": {"stars": "$stars", "symbol": "$symbol", "status": "$status"}, "count": {"$sum": 1}}}
+    ]
+    cursor = signals_coll.aggregate(pipeline)
+    results = []
+    async for doc in cursor:
+        results.append((doc['_id'].get('stars', 5), doc['_id'].get('symbol'), doc['_id'].get('status'), doc['count']))
+    return results
 
-# Yangiliklar xotirasi (oxirgi yangilik sarlavhasi)
 async def get_last_news_link() -> str:
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('''CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)''')
-        async with db.execute("SELECT value FROM kv_store WHERE key='last_news'") as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else ""
+    doc = await kv_coll.find_one({"key": "last_news"})
+    return doc['value'] if doc else ""
 
 async def save_last_news_link(link: str):
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute('''CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)''')
-        await db.execute("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('last_news', ?)", (link,))
-        await db.commit()
+    await kv_coll.update_one({"key": "last_news"}, {"$set": {"value": link}}, upsert=True)
