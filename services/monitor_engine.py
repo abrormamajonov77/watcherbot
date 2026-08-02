@@ -23,7 +23,7 @@ async def background_checker(mexc, telegram_notifier_func):
                     sig_type = sig['type']
                     entry = sig['entry']
                     tp1 = sig['tp']
-                    tp2 = sig['tp2']
+                    tp2 = sig.get('tp2')
                     sl = sig['sl']
                     
                     msg_type = None
@@ -33,7 +33,7 @@ async def background_checker(mexc, telegram_notifier_func):
                     if status == 'PENDING':
                         sig_time_dt = datetime.fromisoformat(sig['timestamp'])
                         # Time-decay for Scalping (2-stars) -> 3 hours
-                        if sig['stars'] == 2 and (datetime.now() - sig_time_dt) > timedelta(hours=3):
+                        if sig.get('stars', 5) == 2 and (datetime.now() - sig_time_dt) > timedelta(hours=3):
                             await update_signal_status(sig_id, 'EXPIRED')
                             logger.info(f"{sig['symbol']} Scalp signali eskirgani uchun (3 soat) yopildi.")
                             continue
