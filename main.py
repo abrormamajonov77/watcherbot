@@ -4,14 +4,19 @@ import ccxt.async_support as ccxt
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram import F
 
 from config import TELEGRAM_BOT_TOKEN, WATCHER_TOKEN
-from database import init_db, add_user, get_all_users
+from database import init_db, add_user, get_all_users, get_pending_signals, get_weekly_signals_stats, get_daily_coin_stats
 from services.sniper_engine import sniper_scanner_loop
 from services.spot_engine import spot_scanner_loop
 from services.watcher_engine import check_news_loop
-from services.monitor_engine import background_checker, weekly_reporter, daily_reporter
+from services.monitor_engine import background_checker, weekly_reporter, daily_reporter, generate_ai_summary
+from keep_alive import keep_alive
+import pandas as pd
+import pandas_ta as ta
+from datetime import datetime, timedelta
 from keep_alive import keep_alive
 
 # Logging sozlari
@@ -39,6 +44,13 @@ async def mock_fetch_swap_markets(*args, **kwargs):
     return []
 mexc.fetch_swap_markets = mock_fetch_swap_markets
 
+def get_main_menu():
+    kb = [
+        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="🟢 Faol Signallar")],
+        [KeyboardButton(text="🔍 Tangani tekshirish"), KeyboardButton(text="⚙️ Sozlamalar")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -53,9 +65,97 @@ async def cmd_start(message: types.Message):
     )
     image_url = "https://images.unsplash.com/photo-1621416894569-0f39ed31d247?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80"
     try:
-        await message.answer_photo(photo=image_url, caption=warning_text)
+        await message.answer_photo(photo=image_url, caption=warning_text, reply_markup=get_main_menu())
     except Exception:
-        await message.answer(warning_text)
+        await message.answer(warning_text, reply_markup=get_main_menu())
+
+@dp.message(F.text == "📊 Statistika")
+async def handle_stats_btn(message: types.Message):
+    await message.answer("Sizning bugungi statistikangiz hisoblanmoqda... ⏳")
+    now = datetime.now()
+    yesterday_iso = (now - timedelta(days=1)).isoformat()
+    
+    stats = await get_weekly_signals_stats(yesterday_iso)
+    total = 0
+    wins, losses, bes = 0, 0, 0
+    for row in stats:
+        stars, status, count = row[0], row[1], row[2]
+        total += count
+        if status == 'WIN': wins += count
+        elif status == 'LOSS': losses += count
+        elif status == 'BREAK_EVEN': bes += count
+        
+    if total == 0:
+        await message.answer("Oxirgi 24 soat ichida yakunlangan signallar yo'q.")
+        return
+        
+    win_rate = (wins / total) * 100
+    res = f"📊 <b>OXIRGI 24 SOATLIK STATISTIKA</b> 📊\n\n"
+    res += f"Jami yopilgan: {total} ta\n"
+    res += f"🎯 TP: {wins} | 🛑 SL: {losses} | 🛡 BE: {bes}\n"
+    res += f"🏆 Umumiy Aniqlik: <b>{win_rate:.1f}%</b>"
+    await message.answer(res)
+
+@dp.message(F.text == "🟢 Faol Signallar")
+async def handle_active_signals(message: types.Message):
+    signals = await get_pending_signals()
+    if not signals:
+        await message.answer("Hozirda ochiq (faol) signallar yo'q.")
+        return
+    
+    res = "🟢 <b>FAOL SIGNALLAR RO'YXATI:</b>\n\n"
+    for s in signals:
+        res += f"🔸 <b>{s['symbol']}</b> ({s['type']}) | Kirish: ${s['entry']:.4f} | TP1: ${s['tp']:.4f} | SL: ${s['sl']:.4f}\n"
+        
+    await message.answer(res)
+
+@dp.message(F.text == "🔍 Tangani tekshirish")
+async def handle_check_btn(message: types.Message):
+    await message.answer("Tangani tahlil qilish uchun quyidagicha yozing:\n\n<code>/check BTC</code>\n(yoki istalgan tanga nomi)")
+
+@dp.message(F.text == "⚙️ Sozlamalar")
+async def handle_settings_btn(message: types.Message):
+    await message.answer("Tez kunda... Bu yerda siz xabarlarni o'chirib yoqishingiz mumkin bo'ladi.")
+
+@dp.message(Command("check"))
+async def cmd_check_coin(message: types.Message):
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Iltimos koin nomini yozing. Masalan: /check TON")
+        return
+    
+    symbol = args[1].upper()
+    if not symbol.endswith("USDT"):
+        symbol += "/USDT"
+        
+    msg = await message.answer(f"🔍 <b>{symbol}</b> tahlil qilinmoqda... ⏳")
+    try:
+        ohlcv = await mexc.fetch_ohlcv(symbol, timeframe='15m', limit=50)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['rsi'] = ta.rsi(df['close'], length=14)
+        df['ema50'] = ta.ema(df['close'], length=50)
+        
+        current_close = df['close'].iloc[-1]
+        rsi = df['rsi'].iloc[-1]
+        ema50 = df['ema50'].iloc[-1]
+        
+        trend = "O'suvchi (UP)" if current_close > ema50 else "Tushuvchi (DOWN)"
+        
+        res = f"📊 <b>{symbol} (15M Chart)</b>:\n"
+        res += f"💵 Joriy narx: ${current_close:.5f}\n"
+        res += f"📉 Trend (EMA50): {trend}\n"
+        res += f"⚡ RSI: {rsi:.1f}\n\n"
+        
+        if current_close > ema50 and rsi > 55:
+            res += "Maslahat: O'sish kuchli (LONG ehtimoli bor) 🚀"
+        elif current_close < ema50 and rsi < 45:
+            res += "Maslahat: Tushish kuchli (SHORT ehtimoli bor) 🩸"
+        else:
+            res += "Maslahat: Bozor yonlama (Chop zone) - kutib turing 🛡"
+            
+        await msg.edit_text(res)
+    except Exception as e:
+        await msg.edit_text(f"Xatolik: Bunday koin topilmadi yoki birjada yo'q ({symbol}).")
 
 @dp.message(Command("status"))
 async def cmd_status(message: types.Message):
