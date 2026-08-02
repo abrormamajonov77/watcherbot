@@ -33,10 +33,10 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool, is_scalp: bool = F
         # Risk (zarar) miqdori
         risk = current_close - sl
         
-        # Take Profit 1 = Risk * 1 (Risk/Reward 1:1)
-        tp1 = current_close + risk
-        # Take Profit 2 = Risk * 2 (Risk/Reward 1:2)
-        tp2 = current_close + (risk * 2)
+        # Take Profit 1 = Risk * 1.5 (Risk/Reward 1:1.5)
+        tp1 = current_close + (risk * 1.5)
+        # Take Profit 2 = Risk * 3.0 (Risk/Reward 1:3)
+        tp2 = current_close + (risk * 3.0)
     else:
         # Short uchun SL = Oxirgi 15 ta shamning eng yuqori nuqtasi (Swing High) + buffer
         swing_high = df['high'].tail(15).max()
@@ -45,10 +45,10 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool, is_scalp: bool = F
         # Risk (zarar) miqdori
         risk = sl - current_close
         
-        # Take Profit 1 = Risk * 1
-        tp1 = current_close - risk
-        # Take Profit 2 = Risk * 2
-        tp2 = current_close - (risk * 2)
+        # Take Profit 1 = Risk * 1.5
+        tp1 = current_close - (risk * 1.5)
+        # Take Profit 2 = Risk * 3.0
+        tp2 = current_close - (risk * 3.0)
         
     return float(tp1), float(tp2), float(sl), float(current_atr)
 

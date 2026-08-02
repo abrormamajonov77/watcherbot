@@ -50,23 +50,23 @@ async def analyze_symbol(symbol, mexc, tickers):
         candle_size = abs(closed_candle['close'] - closed_candle['open'])
 
         # ── HAJM VA ATR FILTRI ────────────
-        # Hajm o'rtachadan atigi teng yoki baland bo'lsa yetarli
-        if current_volume < avg_volume: return None
-        # Sham tanasi ATR ning 30% ini tashkil qilsa yetarli
-        if candle_size < (current_atr * 0.3): return None
+        # Hajm o'rtachadan kamida 1.5x baland bo'lishi kerak (7-ballik qattiqlik)
+        if current_volume < (avg_volume * 1.5): return None
+        # Sham tanasi ATR ning kamida 60% ini tashkil qilishi kerak (aniq harakat)
+        if candle_size < (current_atr * 0.6): return None
         
         volume_spike = current_volume / avg_volume
 
         signal_key = f"{symbol}_{timestamp}"
         if signal_key in seen_signals: return None
 
-        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI va EMA (shartlar yumshatildi)
-        is_long_breakout = current_close > resistance_high and current_rsi > 52 and ema20_val > ema50_val
-        is_short_breakdown = current_close < support_low and current_rsi < 48 and ema20_val < ema50_val
+        # Mantiqiy o'zgaruvchilar (breakout/breakdown) - RSI (55/45) va EMA
+        is_long_breakout = current_close > resistance_high and current_rsi > 55 and ema20_val > ema50_val
+        is_short_breakdown = current_close < support_low and current_rsi < 45 and ema20_val < ema50_val
         
-        # Chop Zone himoyasi
+        # Chop Zone himoyasi (Trendni aniq tasdiqlash uchun 0.1% oraliq)
         ema_diff_percent = abs(ema20_val - ema50_val) / ema50_val
-        if ema_diff_percent < 0.0002: return None # 0.02% dan kam farq - yonlama bozor (juda yumshatildi)
+        if ema_diff_percent < 0.001: return None 
 
         if not (is_long_breakout or is_short_breakdown): return None
         
@@ -114,13 +114,15 @@ async def analyze_symbol(symbol, mexc, tickers):
         elif signal_type == "SHORT" and not trend_1h_up and not trend_4h_up:
             is_macro_aligned = True
             
-        stars = 2 # Default to 2-star (Scalping) if macro trend is against us
-        if is_macro_aligned:
-            stars = 3
-            if volume_spike >= 2.0:
-                stars = 5
+        if not is_macro_aligned:
+            # TRENDGA QARSHI (SCALPING) SIGNALLARNI O'CHIRAMIZ
+            return None
+            
+        stars = 3 
+        if volume_spike >= 2.0:
+            stars = 5
                 
-        is_scalp = (stars == 2)
+        is_scalp = False
             
         tp1, tp2, sl, atr = calculate_dynamic_tp_sl(df, current_close, is_long=(signal_type == "LONG"), is_scalp=is_scalp)
 
@@ -129,7 +131,7 @@ async def analyze_symbol(symbol, mexc, tickers):
         trend_icon = "📈" if signal_type == "LONG" else "📉"
         entry_emoji = "🚀" if signal_type == "LONG" else "🩸"
         star_emoji = "⭐⭐⭐⭐⭐" if stars == 5 else "⭐⭐⭐" if stars == 3 else "⭐⭐"
-        star_label = "O'ta ishonchli (Spot)" if stars == 5 else "Trendga mos (Snayper)" if stars == 3 else "Trendga qarshi (Scalping)"
+        star_label = "O'ta ishonchli (Trend+Hajm)" if stars == 5 else "Trendga mos (Snayper)" if stars == 3 else "Trendga qarshi (Scalping)"
         
         scalp_warning = "🚨 <b>DIQQAT:</b> Katta trend teskari! Bu qisqa muddatli Skalping (Risk 100% o'zingizda!)\n━━━━━━━━━━━━━━━━━━━━━\n" if is_scalp else ""
 
