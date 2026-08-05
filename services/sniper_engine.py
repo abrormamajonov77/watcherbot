@@ -42,18 +42,17 @@ async def analyze_symbol(symbol, mexc, tickers):
         if pd.isna(current_atr) or current_atr == 0: return None
 
         avg_volume     = prev_candles['volume'].mean()
-        # Oldin 18 ta shamning 'high' laridan baland bo'lishi kerak edi (juda qattiq shart).
-        # Endi faqat oldingi 18 ta shamning 'close' laridan (yopilish narxlaridan) baland bo'lsa yetarli.
-        resistance_high = prev_candles['close'].max()
-        support_low    = prev_candles['close'].min()
+        # Oldingi 18 ta shamning 'high' va 'low' laridan (wicks) baland bo'lishi kerak.
+        resistance_high = prev_candles['high'].max()
+        support_low    = prev_candles['low'].min()
         
         candle_size = abs(closed_candle['close'] - closed_candle['open'])
 
         # ── HAJM VA ATR FILTRI ────────────
-        # Hajm o'rtachadan kamida 1.5x baland bo'lishi kerak (7-ballik qattiqlik)
-        if current_volume < (avg_volume * 1.5): return None
-        # Sham tanasi ATR ning kamida 60% ini tashkil qilishi kerak (aniq harakat)
-        if candle_size < (current_atr * 0.6): return None
+        # Hajm o'rtachadan kamida 2.0x baland bo'lishi kerak (7-ballik qattiqlik)
+        if current_volume < (avg_volume * 2.0): return None
+        # Sham tanasi ATR ning kamida 1.0 (ya'ni 100%) ini tashkil qilishi kerak (aniq harakat)
+        if candle_size < (current_atr * 1.0): return None
         
         volume_spike = current_volume / avg_volume
 

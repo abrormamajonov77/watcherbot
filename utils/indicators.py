@@ -24,6 +24,7 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool, is_scalp: bool = F
 
     # Kichik xavfsizlik (soya - wick) masofasi
     buffer = current_atr * 0.5 
+    max_risk = current_atr * 3.0
     
     if is_long:
         # Long uchun SL = Oxirgi 15 ta shamning eng pastki nuqtasi (Swing Low) - buffer
@@ -33,6 +34,11 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool, is_scalp: bool = F
         # Risk (zarar) miqdori
         risk = current_close - sl
         
+        # Risk chegaradan oshib ketmasligini ta'minlaymiz
+        if risk > max_risk:
+            risk = max_risk
+            sl = current_close - max_risk
+            
         # Take Profit 1 = Risk * 1.5 (Risk/Reward 1:1.5)
         tp1 = current_close + (risk * 1.5)
         # Take Profit 2 = Risk * 3.0 (Risk/Reward 1:3)
@@ -45,6 +51,11 @@ def calculate_dynamic_tp_sl(df, current_close, is_long: bool, is_scalp: bool = F
         # Risk (zarar) miqdori
         risk = sl - current_close
         
+        # Risk chegaradan oshib ketmasligini ta'minlaymiz
+        if risk > max_risk:
+            risk = max_risk
+            sl = current_close + max_risk
+            
         # Take Profit 1 = Risk * 1.5
         tp1 = current_close - (risk * 1.5)
         # Take Profit 2 = Risk * 3.0

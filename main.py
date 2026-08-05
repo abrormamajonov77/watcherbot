@@ -131,7 +131,13 @@ async def cmd_check_coin(message: types.Message):
     msg = await message.answer(f"🔍 <b>{symbol}</b> tahlil qilinmoqda... ⏳")
     try:
         ohlcv = await mexc.fetch_ohlcv(symbol, timeframe='15m', limit=50)
+        
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # Grafik uchun timestampni indeksga o'tkazish
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
         df['rsi'] = ta.rsi(df['close'], length=14)
         df['ema50'] = ta.ema(df['close'], length=50)
         
@@ -153,9 +159,25 @@ async def cmd_check_coin(message: types.Message):
         else:
             res += "Maslahat: Bozor yonlama (Chop zone) - kutib turing 🛡"
             
-        await msg.edit_text(res)
+        # Grafik chizish
+        import io
+        import mplfinance as mpf
+        
+        buf = io.BytesIO()
+        mc = mpf.make_marketcolors(up='#00ff00', down='#ff0000', edge='inherit', wick='inherit', volume='in')
+        s  = mpf.make_mpf_style(base_mpf_style='nightclouds', marketcolors=mc, gridstyle=':')
+        
+        mpf.plot(df, type='candle', volume=True, style=s, savefig=buf, 
+                 title=f"{symbol} 15M", ylabel='Price', ylabel_lower='Volume')
+        buf.seek(0)
+        
+        photo = types.BufferedInputFile(buf.read(), filename="chart.png")
+        await message.answer_photo(photo=photo, caption=res)
+        await msg.delete()
+        
     except Exception as e:
-        await msg.edit_text(f"Xatolik: Bunday koin topilmadi yoki birjada yo'q ({symbol}).")
+        logger.error(f"/check xatosi {symbol}: {e}")
+        await msg.edit_text(f"Xatolik: Bunday koin topilmadi, birjada yo'q yoki grafik chizib bo'lmadi ({symbol}).")
 
 @dp.message(Command("status"))
 async def cmd_status(message: types.Message):
