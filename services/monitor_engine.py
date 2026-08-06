@@ -72,7 +72,15 @@ async def background_checker(mexc, telegram_notifier_func):
                                 new_status = 'BREAK_EVEN'
                                 
                     if new_status:
-                        await update_signal_status(sig_id, new_status)
+                        if sig_type == 'LONG':
+                            profit_pct = ((current_price - entry) / entry) * 100
+                        else:
+                            profit_pct = ((entry - current_price) / entry) * 100
+                            
+                        if msg_type == 'BREAK_EVEN':
+                            profit_pct = 0.0
+                            
+                        await update_signal_status(sig_id, new_status, profit_pct)
                         if new_sl:
                             await update_signal_sl(sig_id, new_sl)
                             
@@ -90,6 +98,8 @@ async def background_checker(mexc, telegram_notifier_func):
                         elif msg_type == 'BREAK_EVEN':
                             emo = "🛡"
                             res_str = "Zararsiz yopildi (Break-even). TP1 dan keyin narx orqaga qaytdi."
+                            
+                        res_str += f"\n📊 Foyda/Zarar: {profit_pct:+.2f}%"
                         
                         msg = (
                             f"{emo} <b>{sig['symbol']}</b> | {sig_type} signali yangilandi!\n"
@@ -127,15 +137,16 @@ async def weekly_reporter(telegram_notifier_func):
             stats = await get_weekly_signals_stats(last_week_iso)
             
             data = {
-                5: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
-                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
-                2: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
+                5: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0},
+                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0},
+                2: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0}
             }
             
             for row in stats:
-                stars, status, count = row[0], row[1], row[2]
+                stars, status, count, profit = row[0], row[1], row[2], row[3]
                 if stars in data and status in data[stars]:
                     data[stars][status] += count
+                    data[stars]['profit'] += profit
                     
             report_parts = ["📊 <b>HAFTALIK SAVDO HISOBOTI</b> 📊\n━━━━━━━━━━━━━━━━━━━━━\n"]
             
@@ -147,12 +158,13 @@ async def weekly_reporter(telegram_notifier_func):
                 
                 if total > 0:
                     win_rate = (wins / total) * 100
+                    tot_profit = data[star]['profit']
                     star_icon = "⭐⭐⭐⭐⭐ (Spot)" if star == 5 else "⭐⭐⭐ (Snayper)" if star == 3 else "⭐⭐ (Scalping)"
                     report_parts.append(
                         f"🔹 <b>{star_icon}</b>\n"
                         f"Jami yopilgan: {total} ta\n"
                         f"🎯 TP: {wins} | 🛑 SL: {losses} | 🛡 BE: {bes}\n"
-                        f"🏆 Aniqlik: <b>{win_rate:.1f}%</b>\n"
+                        f"🏆 Aniqlik: <b>{win_rate:.1f}%</b> | 💰 Sof foyda: <b>{tot_profit:+.2f}%</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━━\n"
                     )
             
@@ -198,16 +210,17 @@ async def daily_reporter(telegram_notifier_func):
             # Umumiy statistika
             stats = await get_weekly_signals_stats(yesterday_iso)
             data = {
-                5: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
-                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0},
-                2: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
+                5: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0},
+                3: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0},
+                2: {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0}
             }
             total_signals = 0
             
             for row in stats:
-                stars, status, count = row[0], row[1], row[2]
+                stars, status, count, profit = row[0], row[1], row[2], row[3]
                 if stars in data and status in data[stars]:
                     data[stars][status] += count
+                    data[stars]['profit'] += profit
                     total_signals += count
             
             if total_signals > 0:
@@ -215,11 +228,12 @@ async def daily_reporter(telegram_notifier_func):
                 coins_data = {5: {}, 3: {}, 2: {}}
                 
                 for row in coin_stats:
-                    stars, sym, status, count = row[0], row[1], row[2], row[3]
+                    stars, sym, status, count, profit = row[0], row[1], row[2], row[3], row[4]
                     if stars in coins_data:
                         if sym not in coins_data[stars]:
-                             coins_data[stars][sym] = {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0}
+                             coins_data[stars][sym] = {'WIN': 0, 'LOSS': 0, 'BREAK_EVEN': 0, 'profit': 0.0}
                         coins_data[stars][sym][status] += count
+                        coins_data[stars][sym]['profit'] += profit
                 
                 report_parts = [
                     "📊 <b>OXIRGI 24 SOATLIK SAVDO HISOBOTI</b> 📊\n"
@@ -236,21 +250,22 @@ async def daily_reporter(telegram_notifier_func):
                     
                     if total > 0:
                         win_rate = (wins / total) * 100
+                        tot_profit = data[star]['profit']
                         star_icon = "⭐⭐⭐⭐⭐ (Spot)" if star == 5 else "⭐⭐⭐ (Snayper)" if star == 3 else "⭐⭐ (Scalping)"
                         
                         coins_str_list = []
                         for sym, cdata in coins_data[star].items():
                             coins_str_list.append(
-                                f"🔸 {sym}: {cdata['WIN']}✅ | {cdata['LOSS']}❌ | {cdata['BREAK_EVEN']}🛡"
+                                f"🔸 {sym}: {cdata['WIN']}✅ | {cdata['LOSS']}❌ | {cdata['BREAK_EVEN']}🛡 ({cdata['profit']:+.2f}%)"
                             )
                         coins_text = "\n".join(coins_str_list)
                         
-                        stats_for_ai += f"{star} Yulduz: {wins} Foyda, {losses} Zarar. Winrate: {win_rate:.1f}%\n"
+                        stats_for_ai += f"{star} Yulduz: {wins} Foyda, {losses} Zarar. Winrate: {win_rate:.1f}%. Sof foyda: {tot_profit:+.2f}%\n"
                         
                         report_parts.append(
                             f"🔹 <b>{star_icon}</b>\n"
                             f"Jami: {total} ta | 🎯 TP: {wins} | 🛑 SL: {losses} | 🛡 BE: {bes}\n"
-                            f"🏆 Aniqlik: <b>{win_rate:.1f}%</b>\n\n"
+                            f"🏆 Aniqlik: <b>{win_rate:.1f}%</b> | 💰 Sof foyda: <b>{tot_profit:+.2f}%</b>\n\n"
                             f"🪙 <b>Tangalar bo'yicha:</b>\n"
                             f"{coins_text}\n"
                             "━━━━━━━━━━━━━━━━━━━━━━━━━\n"

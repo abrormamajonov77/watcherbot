@@ -52,8 +52,11 @@ async def get_pending_signals() -> list:
         results.append(doc)
     return results
 
-async def update_signal_status(signal_id, status):
-    await signals_coll.update_one({"_id": ObjectId(signal_id)}, {"$set": {"status": status}})
+async def update_signal_status(signal_id, status, profit_pct=None):
+    update_fields = {"status": status}
+    if profit_pct is not None:
+        update_fields["profit_pct"] = profit_pct
+    await signals_coll.update_one({"_id": ObjectId(signal_id)}, {"$set": update_fields})
 
 async def update_signal_sl(signal_id, sl):
     await signals_coll.update_one({"_id": ObjectId(signal_id)}, {"$set": {"sl": sl}})
@@ -61,23 +64,23 @@ async def update_signal_sl(signal_id, sl):
 async def get_weekly_signals_stats(start_time_iso: str):
     pipeline = [
         {"$match": {"timestamp": {"$gt": start_time_iso}, "status": {"$in": ['WIN', 'LOSS', 'BREAK_EVEN']}}},
-        {"$group": {"_id": {"stars": "$stars", "status": "$status"}, "count": {"$sum": 1}}}
+        {"$group": {"_id": {"stars": "$stars", "status": "$status"}, "count": {"$sum": 1}, "total_profit": {"$sum": "$profit_pct"}}}
     ]
     cursor = signals_coll.aggregate(pipeline)
     results = []
     async for doc in cursor:
-        results.append((doc['_id'].get('stars', 5), doc['_id'].get('status'), doc['count']))
+        results.append((doc['_id'].get('stars', 5), doc['_id'].get('status'), doc['count'], doc.get('total_profit', 0.0)))
     return results
 
 async def get_daily_coin_stats(start_time_iso: str):
     pipeline = [
         {"$match": {"timestamp": {"$gt": start_time_iso}, "status": {"$in": ['WIN', 'LOSS', 'BREAK_EVEN']}}},
-        {"$group": {"_id": {"stars": "$stars", "symbol": "$symbol", "status": "$status"}, "count": {"$sum": 1}}}
+        {"$group": {"_id": {"stars": "$stars", "symbol": "$symbol", "status": "$status"}, "count": {"$sum": 1}, "total_profit": {"$sum": "$profit_pct"}}}
     ]
     cursor = signals_coll.aggregate(pipeline)
     results = []
     async for doc in cursor:
-        results.append((doc['_id'].get('stars', 5), doc['_id'].get('symbol'), doc['_id'].get('status'), doc['count']))
+        results.append((doc['_id'].get('stars', 5), doc['_id'].get('symbol'), doc['_id'].get('status'), doc['count'], doc.get('total_profit', 0.0)))
     return results
 
 async def get_last_news_link() -> str:
