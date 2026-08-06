@@ -104,7 +104,11 @@ async def background_checker(mexc, telegram_notifier_func):
                         await telegram_notifier_func(msg, sig['symbol'], msg_ids)
                         
                 except Exception as e:
-                    logger.error(f"Narxni tekshirishda xato {sig['symbol']}: {e}")
+                    err_str = str(e)
+                    logger.error(f"Narxni tekshirishda xato {sig['symbol']}: {err_str}")
+                    if "does not have market symbol" in err_str or "BadSymbol" in err_str:
+                        logger.warning(f"{sig['symbol']} birjadan o'chirilgan ko'rinadi. Signal bazadan olib tashlandi (EXPIRED).")
+                        await update_signal_status(sig_id, 'EXPIRED')
                     
         except Exception as e:
             logger.error(f"Background checker xatosi: {e}")
