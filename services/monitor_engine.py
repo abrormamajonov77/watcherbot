@@ -15,9 +15,6 @@ async def background_checker(mexc, telegram_notifier_func):
             pending_signals = await get_pending_signals()
             for sig in pending_signals:
                 try:
-                    ticker = await mexc.fetch_ticker(sig['symbol'])
-                    current_price = ticker['last']
-                    
                     sig_id = sig['id']
                     status = sig['status']
                     sig_type = sig['type']
@@ -25,6 +22,9 @@ async def background_checker(mexc, telegram_notifier_func):
                     tp1 = sig['tp']
                     tp2 = sig.get('tp2')
                     sl = sig['sl']
+                    
+                    ticker = await mexc.fetch_ticker(sig['symbol'])
+                    current_price = ticker['last']
                     
                     msg_type = None
                     new_status = None
