@@ -165,7 +165,11 @@ async def cmd_macro(message: types.Message):
     analysis = await generate_macro_analysis(spx, dxy, us10y)
     
     res = f"📊 <b>Jonli Makro Tahlil</b>\n\n{analysis}"
-    await msg.edit_text(res)
+    if len(res) > 4000:
+        await msg.edit_text(res[:4000])
+        await message.answer(res[4000:])
+    else:
+        await msg.edit_text(res)
 
 @dp.message(Command("check"))
 async def cmd_check_coin(message: types.Message):

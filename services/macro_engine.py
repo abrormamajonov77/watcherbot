@@ -43,6 +43,7 @@ TAHLIL TALABLARI:
 1. Makro oqim: DXY va US10Y dinamikasiga qarab kapital qayerga oqmoqda? (Risk-On yoki Risk-Off?)
 2. Kripto Korrelyatsiya: Makro holat kriptoga qanday ta'sir qilyapti? SPX bilan sinxronlik bormi yoki uzilish (decoupling)?
 3. Likvidlik va Og'ish: Katta hajmdagi manipulatsiyalar, fundamental voqealar fonidagi kutilmalar.
+4. MUHIM: Tahlilingni juda qisqa va lo'nda yoz (maksimal 150-200 so'z). Ortiqcha gaplar va uzun tushuntirishlarsiz.
 
 HISOBOT FORMATI:
 📊 Makro holat: [US10Y, DXY, SPX o'zaro bog'liqligi va xulosasi]
