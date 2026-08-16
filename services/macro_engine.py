@@ -15,9 +15,10 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 def get_macro_data():
     try:
         # yfinance orqali oxirgi yopilish yoki joriy narxni olish
-        spx = yf.Ticker("^GSPC").history(period="1d")['Close'].iloc[-1]
-        dxy = yf.Ticker("DX-Y.NYB").history(period="1d")['Close'].iloc[-1]
-        us10y = yf.Ticker("^TNX").history(period="1d")['Close'].iloc[-1]
+        # Dam olish kunlarida (Shanba/Yakshanba) 1d bo'sh kelishi mumkin, shuning uchun 5d beramiz va oxirgisini olamiz
+        spx = yf.Ticker("^GSPC").history(period="5d")['Close'].iloc[-1]
+        dxy = yf.Ticker("DX-Y.NYB").history(period="5d")['Close'].iloc[-1]
+        us10y = yf.Ticker("^TNX").history(period="5d")['Close'].iloc[-1]
         return spx, dxy, us10y
     except Exception as e:
         logger.error(f"yfinance xatosi: {e}")
