@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- TOKENS & API KEYS ---
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WATCHER_TOKEN = os.getenv('BOT_TOKEN')
-GEMINI_KEY = os.getenv('GEMINI_KEY')
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '').strip().strip('"').strip("'")
+WATCHER_TOKEN = os.getenv('BOT_TOKEN', '').strip().strip('"').strip("'")
+GEMINI_KEY = os.getenv('GEMINI_KEY', '').strip().strip('"').strip("'")
 
 if not TELEGRAM_BOT_TOKEN or not WATCHER_TOKEN or not GEMINI_KEY:
     print("XATOLIK: .env faylida tokenlar (TELEGRAM_BOT_TOKEN, BOT_TOKEN, GEMINI_KEY) to'liq kiritilmagan!")
