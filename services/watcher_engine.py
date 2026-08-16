@@ -49,7 +49,7 @@ async def check_news_loop(telegram_bot):
                         # Gemini tarjimasi
                         try:
                             response = await client.aio.models.generate_content(
-                                model='gemini-1.5-flash',
+                                model='gemini-2.5-flash',
                                 contents=prompt
                             )
                             tarjima = response.text.strip()

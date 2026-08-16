@@ -194,7 +194,7 @@ async def generate_ai_summary(total_stats_text):
             f"kreativ va motivatsion AI xulosasini yozib ber."
         )
         response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt
         )
         return response.text.strip()
