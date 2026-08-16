@@ -52,12 +52,11 @@ HISOBOT FORMATI:
 🎯 Yakuniy xulosa: [Bozor moyilligi (Bias): Bullish/Bearish/Wait va joriy risk darajasi (Past/O'rta/Yuqori)]
 """
     try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, model.generate_content, prompt)
+        response = await model.generate_content_async(prompt)
         return response.text.strip()
     except Exception as e:
         logger.error(f"Gemini API xatosi (Macro): {e}")
-        return "❌ Kechirasiz, makro tahlilni generatsiya qilishda xatolik yuz berdi."
+        return f"❌ Kechirasiz, makro tahlilni generatsiya qilishda xatolik yuz berdi.\n\n<b>Xato tafsiloti:</b> {str(e)}"
 
 async def macro_reporter_loop(telegram_bot):
     """
