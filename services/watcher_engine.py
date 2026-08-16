@@ -2,15 +2,14 @@ import asyncio
 import logging
 import aiohttp
 import feedparser
-import google.generativeai as genai
+from google import genai
 from config import GEMINI_KEY, RSS_URL, TARGET_CHANNEL
 from database import get_last_news_link, save_last_news_link
 
 logger = logging.getLogger(__name__)
 
-# Gemini sozlamalari
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Yangi google-genai Client
+client = genai.Client(api_key=GEMINI_KEY)
 
 async def fetch_rss(url):
     async with aiohttp.ClientSession() as session:
@@ -46,10 +45,10 @@ async def check_news_loop(telegram_bot):
                         
                         # Gemini tarjimasi
                         try:
-                            # To avoid blocking event loop, use run_in_executor if generate_content is slow, 
-                            # but Gemini library is synchronous by default, so we wrap it.
-                            loop = asyncio.get_event_loop()
-                            response = await loop.run_in_executor(None, model.generate_content, prompt)
+                            response = await client.aio.models.generate_content(
+                                model='gemini-1.5-flash',
+                                contents=prompt
+                            )
                             tarjima = response.text.strip()
                         except Exception as gem_e:
                             logger.error(f"Gemini API xatosi: {gem_e}")

@@ -176,12 +176,11 @@ async def weekly_reporter(telegram_notifier_func):
             await asyncio.sleep(60)
 
 from database import get_pending_signals, update_signal_status, get_all_users, get_weekly_signals_stats, get_daily_coin_stats
-import google.generativeai as genai
+from google import genai
 from config import GEMINI_KEY
 
-# Gemini sozlamalari AI xulosasi uchun
-genai.configure(api_key=GEMINI_KEY)
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
+# Yangi google-genai Client AI xulosasi uchun
+client = genai.Client(api_key=GEMINI_KEY)
 
 async def generate_ai_summary(total_stats_text):
     try:
@@ -191,8 +190,10 @@ async def generate_ai_summary(total_stats_text):
             f"Shu natijaga qarab treyderga 1-2 ta gapdan iborat qisqa, "
             f"kreativ va motivatsion AI xulosasini yozib ber."
         )
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, ai_model.generate_content, prompt)
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         logger.error(f"AI Summary xatosi: {e}")

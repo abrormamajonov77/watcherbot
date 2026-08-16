@@ -4,7 +4,7 @@ pandas_ta
 python-dotenv
 ccxt
 flask
-google-generativeai
+google-genai
 feedparser
 aiohttp
 motor

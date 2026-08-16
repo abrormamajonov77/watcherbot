@@ -2,15 +2,14 @@ import asyncio
 import logging
 import yfinance as yf
 from datetime import datetime, timedelta
-import google.generativeai as genai
+from google import genai
 from config import GEMINI_KEY
 from database import get_users_for_macro
 
 logger = logging.getLogger(__name__)
 
 # Gemini sozlamalari
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+client = genai.Client(api_key=GEMINI_KEY)
 
 def get_macro_data():
     try:
@@ -52,7 +51,10 @@ HISOBOT FORMATI:
 🎯 Yakuniy xulosa: [Bozor moyilligi (Bias): Bullish/Bearish/Wait va joriy risk darajasi (Past/O'rta/Yuqori)]
 """
     try:
-        response = await model.generate_content_async(prompt)
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
         return response.text.strip()
     except Exception as e:
         logger.error(f"Gemini API xatosi (Macro): {e}")
