@@ -8,11 +8,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram import F
 
 from config import TELEGRAM_BOT_TOKEN, WATCHER_TOKEN
-from database import init_db, add_user, get_all_users, get_pending_signals, get_weekly_signals_stats, get_daily_coin_stats
+from database import init_db, add_user, get_users_for_signals, get_pending_signals, get_weekly_signals_stats, get_daily_coin_stats, get_user_settings, update_user_setting
 from services.sniper_engine import sniper_scanner_loop
 from services.spot_engine import spot_scanner_loop
 from services.watcher_engine import check_news_loop
 from services.monitor_engine import background_checker, weekly_reporter, daily_reporter, generate_ai_summary
+from services.macro_engine import macro_reporter_loop, get_macro_data, generate_macro_analysis
 from keep_alive import keep_alive
 import pandas as pd
 import pandas_ta as ta
@@ -115,7 +116,56 @@ async def handle_check_btn(message: types.Message):
 
 @dp.message(F.text == "⚙️ Sozlamalar")
 async def handle_settings_btn(message: types.Message):
-    await message.answer("Tez kunda... Bu yerda siz xabarlarni o'chirib yoqishingiz mumkin bo'ladi.")
+    user_id = message.from_user.id
+    settings = await get_user_settings(user_id)
+    
+    macro_text = "🟢 Yoqilgan" if settings['receive_macro'] else "🔴 O'chirilgan"
+    signals_text = "🟢 Yoqilgan" if settings['receive_signals'] else "🔴 O'chirilgan"
+    
+    kb = [
+        [InlineKeyboardButton(text=f"Makro Tahlillar: {macro_text}", callback_data="toggle_macro")],
+        [InlineKeyboardButton(text=f"Signallar (Spot/Snayper): {signals_text}", callback_data="toggle_signals")]
+    ]
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    await message.answer("⚙️ <b>Sozlamalar:</b> Qaysi xabarlarni olishni xohlaysiz?", reply_markup=markup)
+
+@dp.callback_query(F.data.startswith("toggle_"))
+async def handle_setting_toggle(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    setting_type = callback.data.split("_")[1]
+    
+    settings = await get_user_settings(user_id)
+    current_val = settings[f"receive_{setting_type}"]
+    new_val = not current_val
+    
+    await update_user_setting(user_id, f"receive_{setting_type}", new_val)
+    
+    settings = await get_user_settings(user_id)
+    macro_text = "🟢 Yoqilgan" if settings['receive_macro'] else "🔴 O'chirilgan"
+    signals_text = "🟢 Yoqilgan" if settings['receive_signals'] else "🔴 O'chirilgan"
+    
+    kb = [
+        [InlineKeyboardButton(text=f"Makro Tahlillar: {macro_text}", callback_data="toggle_macro")],
+        [InlineKeyboardButton(text=f"Signallar (Spot/Snayper): {signals_text}", callback_data="toggle_signals")]
+    ]
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    
+    await callback.message.edit_text("⚙️ <b>Sozlamalar yangilandi:</b> Qaysi xabarlarni olishni xohlaysiz?", reply_markup=markup)
+    await callback.answer(f"{setting_type} o'zgartirildi!")
+
+@dp.message(Command("macro"))
+async def cmd_macro(message: types.Message):
+    msg = await message.answer("🔄 Bozor ma'lumotlari yuklanmoqda... ⏳")
+    spx, dxy, us10y = get_macro_data()
+    if spx is None:
+        await msg.edit_text("❌ Ma'lumotlarni yuklashda xatolik yuz berdi. (yfinance API error)")
+        return
+        
+    await msg.edit_text("🧠 AI tahlil qilmoqda... ⏳")
+    analysis = await generate_macro_analysis(spx, dxy, us10y)
+    
+    res = f"📊 <b>Jonli Makro Tahlil</b>\n\n{analysis}"
+    await msg.edit_text(res)
 
 @dp.message(Command("check"))
 async def cmd_check_coin(message: types.Message):
@@ -201,7 +251,7 @@ async def send_to_all_users(text, symbol=None, reply_to_message_ids=None):
         kb = [[InlineKeyboardButton(text="📈 TradingView'da ko'rish", url=tv_url)]]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
-    users = await get_all_users()
+    users = await get_users_for_signals()
     sent_messages = {}
     
     for u in users:
@@ -241,6 +291,7 @@ async def main():
     asyncio.create_task(weekly_reporter(send_to_all_users))
     asyncio.create_task(daily_reporter(send_to_all_users))
     asyncio.create_task(check_news_loop(watcher_bot))
+    asyncio.create_task(macro_reporter_loop(bot))
     
     # 4. Telegram Bot polling
     try:

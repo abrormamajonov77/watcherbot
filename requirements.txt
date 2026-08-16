@@ -10,3 +10,4 @@ aiohttp
 motor
 certifi
 mplfinance
+yfinance

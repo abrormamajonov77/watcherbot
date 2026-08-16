@@ -19,7 +19,14 @@ async def init_db():
     pass
 
 async def add_user(user_id: int):
-    await users_coll.update_one({'user_id': user_id}, {'$set': {'user_id': user_id}}, upsert=True)
+    await users_coll.update_one(
+        {'user_id': user_id}, 
+        {
+            '$set': {'user_id': user_id},
+            '$setOnInsert': {'receive_signals': True, 'receive_macro': True}
+        }, 
+        upsert=True
+    )
 
 async def get_all_users() -> list:
     cursor = users_coll.find({})
@@ -27,6 +34,32 @@ async def get_all_users() -> list:
     async for doc in cursor:
         users.append(doc['user_id'])
     return users
+
+async def get_users_for_signals() -> list:
+    cursor = users_coll.find({"receive_signals": {"$ne": False}})
+    users = []
+    async for doc in cursor:
+        users.append(doc['user_id'])
+    return users
+
+async def get_users_for_macro() -> list:
+    cursor = users_coll.find({"receive_macro": {"$ne": False}})
+    users = []
+    async for doc in cursor:
+        users.append(doc['user_id'])
+    return users
+
+async def get_user_settings(user_id: int) -> dict:
+    doc = await users_coll.find_one({'user_id': user_id})
+    if not doc:
+        return {'receive_signals': True, 'receive_macro': True}
+    return {
+        'receive_signals': doc.get('receive_signals', True),
+        'receive_macro': doc.get('receive_macro', True)
+    }
+
+async def update_user_setting(user_id: int, setting: str, value: bool):
+    await users_coll.update_one({'user_id': user_id}, {'$set': {setting: value}})
 
 async def add_signal(symbol, sig_type, entry, tp, tp2, sl, status, timestamp, message_ids, stars=5):
     msg_str = json.dumps(message_ids) if isinstance(message_ids, dict) else message_ids
