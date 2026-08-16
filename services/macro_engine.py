@@ -8,8 +8,11 @@ from database import get_users_for_macro
 
 logger = logging.getLogger(__name__)
 
-# Gemini sozlamalari
-client = genai.Client(api_key=GEMINI_KEY)
+# Yangi google-genai Client (Explicit Header yordamida AQ. kalitlarni majburlash)
+client = genai.Client(
+    api_key=GEMINI_KEY,
+    http_options={'headers': {'x-goog-api-key': GEMINI_KEY}}
+)
 
 def get_macro_data():
     try:
