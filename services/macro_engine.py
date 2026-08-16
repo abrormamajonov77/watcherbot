@@ -8,11 +8,8 @@ from database import get_users_for_macro
 
 logger = logging.getLogger(__name__)
 
-# Yangi google-genai Client (Explicit Header yordamida AQ. kalitlarni majburlash)
-client = genai.Client(
-    api_key=GEMINI_KEY,
-    http_options={'headers': {'x-goog-api-key': GEMINI_KEY}}
-)
+# Yangi google-genai Client
+client = genai.Client(api_key=GEMINI_KEY)
 
 def get_macro_data():
     try:
@@ -54,7 +51,8 @@ HISOBOT FORMATI:
 🎯 Yakuniy xulosa: [Bozor moyilligi (Bias): Bullish/Bearish/Wait va joriy risk darajasi (Past/O'rta/Yuqori)]
 """
     try:
-        response = await client.aio.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model='gemini-2.5-flash',
             contents=prompt
         )

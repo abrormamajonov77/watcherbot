@@ -179,11 +179,8 @@ from database import get_pending_signals, update_signal_status, get_all_users, g
 from google import genai
 from config import GEMINI_KEY
 
-# Yangi google-genai Client AI xulosasi uchun (Explicit Header yordamida AQ. kalitlarni majburlash)
-client = genai.Client(
-    api_key=GEMINI_KEY,
-    http_options={'headers': {'x-goog-api-key': GEMINI_KEY}}
-)
+# Yangi google-genai Client AI xulosasi uchun
+client = genai.Client(api_key=GEMINI_KEY)
 
 async def generate_ai_summary(total_stats_text):
     try:
@@ -193,7 +190,8 @@ async def generate_ai_summary(total_stats_text):
             f"Shu natijaga qarab treyderga 1-2 ta gapdan iborat qisqa, "
             f"kreativ va motivatsion AI xulosasini yozib ber."
         )
-        response = await client.aio.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model='gemini-2.5-flash',
             contents=prompt
         )

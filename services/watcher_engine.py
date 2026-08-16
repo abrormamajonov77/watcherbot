@@ -8,11 +8,8 @@ from database import get_last_news_link, save_last_news_link
 
 logger = logging.getLogger(__name__)
 
-# Yangi google-genai Client (Explicit Header yordamida AQ. kalitlarni majburlash)
-client = genai.Client(
-    api_key=GEMINI_KEY,
-    http_options={'headers': {'x-goog-api-key': GEMINI_KEY}}
-)
+# Yangi google-genai Client
+client = genai.Client(api_key=GEMINI_KEY)
 
 async def fetch_rss(url):
     async with aiohttp.ClientSession() as session:
@@ -48,7 +45,8 @@ async def check_news_loop(telegram_bot):
                         
                         # Gemini tarjimasi
                         try:
-                            response = await client.aio.models.generate_content(
+                            response = await asyncio.to_thread(
+                                client.models.generate_content,
                                 model='gemini-2.5-flash',
                                 contents=prompt
                             )
